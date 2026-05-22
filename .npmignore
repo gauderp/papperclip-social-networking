@@ -1,0 +1,10 @@
+src/
+tests/
+graphify-out/
+node_modules/
+*.map
+esbuild.config.mjs
+rollup.config.mjs
+vitest.config.ts
+tsconfig.json
+pnpm-lock.yaml

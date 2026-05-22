@@ -1,0 +1,7 @@
+dist
+node_modules
+.paperclip-sdk
+graphify-out
+.vite
+*.log
+.DS_Store
