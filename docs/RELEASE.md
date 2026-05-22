@@ -9,9 +9,14 @@ Arquivos canonicos em `.github/workflows/`. Se o push do agente falhar, use as c
 | `ci.yml` | push/PR `main`, tags `v*` | typecheck, test, build |
 | `publish-npm.yml` | tag `v*`, `workflow_dispatch` | valida versão, CI, `npm publish` |
 
-### Secret obrigatório
+### Pré-requisitos npmjs (uma vez)
 
-- **`NPM_TOKEN`** — token npm com publish no escopo `@gauderp`
+1. Criar a **organização ou usuário** com escopo `@gauderp` em [npmjs.com](https://www.npmjs.com/org/create) (erro `Scope not found` = escopo ainda não existe).
+2. O usuário do **`NPM_TOKEN`** deve ser membro da org com permissão de **publish** em `@gauderp`.
+
+### Secret obrigatório (GitHub)
+
+- **`NPM_TOKEN`** — token npm (Classic: `publish`; Granular: read/write em Packages para `@gauderp`)
 
 ### Tag de release
 
