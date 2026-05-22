@@ -16,6 +16,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Require NPM_TOKEN secret
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "::error::Configure repository secret NPM_TOKEN (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+
       - uses: pnpm/action-setup@v4
 
       - uses: actions/setup-node@v4
@@ -23,6 +32,8 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
           cache: "pnpm"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Verificar versao da tag vs package.json
         run: |
