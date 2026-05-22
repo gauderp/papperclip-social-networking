@@ -2,7 +2,7 @@
 
 ## Automático (GitHub Actions)
 
-Arquivos em `.github/workflows/` (no clone local; podem precisar de push manual se o token OAuth não tiver escopo `workflow`):
+Arquivos canonicos em `.github/workflows/`. Se o push do agente falhar, use as copias em [`docs/github-workflows/`](./github-workflows/README.md) e cole pela UI do GitHub.
 
 | Workflow | Gatilho | Ação |
 |----------|---------|------|
