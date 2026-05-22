@@ -20,6 +20,8 @@ A tag deve coincidir com `package.json` (`v0.1.0` ↔ `"version": "0.1.0"`).
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
+
+Repositorio: https://github.com/gauderp/papperclip-social-networking
 ```
 
 ## Primeira publicação

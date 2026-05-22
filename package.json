@@ -32,12 +32,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/gauderp/social-networking.git"
+    "url": "git+https://github.com/gauderp/papperclip-social-networking.git"
   },
   "bugs": {
-    "url": "https://github.com/gauderp/social-networking/issues"
+    "url": "https://github.com/gauderp/papperclip-social-networking/issues"
   },
-  "homepage": "https://github.com/gauderp/social-networking#readme",
+  "homepage": "https://github.com/gauderp/papperclip-social-networking#readme",
   "dependencies": {
     "@paperclipai/plugin-sdk": "2026.517.0"
   },

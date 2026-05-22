@@ -16,7 +16,7 @@ Plugin Paperclip para gerenciar redes sociais no Gaud ERP — conexão de contas
 
 ## Repositório
 
-Código-fonte: [gauderp/social-networking](https://github.com/gauderp/social-networking)
+Código-fonte: [gauderp/papperclip-social-networking](https://github.com/gauderp/papperclip-social-networking) (redirect de `social-networking`)
 
 ## Desenvolvimento local
 
@@ -32,8 +32,8 @@ paperclipai plugin inspect gauderp.social-networking
 ### Clone local
 
 ```bash
-git clone https://github.com/gauderp/social-networking.git
-cd social-networking
+git clone https://github.com/gauderp/papperclip-social-networking.git
+cd papperclip-social-networking
 pnpm install && pnpm run build
 paperclipai plugin install "$(pwd)"
 ```
@@ -41,8 +41,8 @@ paperclipai plugin install "$(pwd)"
 No Windows (PowerShell):
 
 ```powershell
-git clone https://github.com/gauderp/social-networking.git
-cd social-networking
+git clone https://github.com/gauderp/papperclip-social-networking.git
+cd papperclip-social-networking
 pnpm install; pnpm run build
 paperclipai plugin install (Resolve-Path .).Path
 ```
