@@ -47,15 +47,50 @@ pnpm install; pnpm run build
 paperclipai plugin install (Resolve-Path .).Path
 ```
 
-### npm (opcional, após publicação)
+### npm (recomendado em produção)
 
-Quando o pacote estiver publicado no npm:
+Após a primeira publicação no [npmjs](https://www.npmjs.com/package/@gauderp/social-networking):
 
 ```bash
 paperclipai plugin install @gauderp/social-networking@0.1.0
 ```
 
 `prepublishOnly` executa o build antes de `npm publish`.
+
+## Releases e publicação no npm
+
+Cada **tag `v*`** no GitHub dispara o workflow [Publish npm](.github/workflows/publish-npm.yml), que valida CI, confere se a tag bate com `package.json` e executa `npm publish --access public --provenance`.
+
+### Pré-requisitos (uma vez, no repositório GitHub)
+
+1. Criar/associar o escopo **`@gauderp`** no npmjs (conta ou org com permissão de publish).
+2. Gerar um **Access Token** de publish (Classic: scope `publish`; Granular: Packages read/write para `@gauderp`).
+3. Adicionar o secret **`NPM_TOKEN`** em *Settings → Secrets and variables → Actions* do repo `gauderp/social-networking`.
+
+### Fluxo de release
+
+```bash
+# 1. Atualizar versão em package.json (ex.: 0.1.1)
+# 2. Commit na main
+git add package.json pnpm-lock.yaml
+git commit -m "chore: release v0.1.1"
+git push origin main
+
+# 3. Tag alinhada à versão do package.json
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+O workflow publica `@gauderp/social-networking@<versão>` no npmjs. Para republicar a mesma versão, é preciso bump ou `npm unpublish` (não recomendado em produção).
+
+### Publicação manual (fallback)
+
+```bash
+pnpm install
+pnpm run typecheck && pnpm test && pnpm run build
+npm publish --access public
+# requer npm login com permissão no escopo @gauderp
+```
 
 ## Build e verificação
 
