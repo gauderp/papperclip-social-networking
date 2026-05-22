@@ -1,5 +1,5 @@
 {
-  "name": "@gauderp/social-networking",
+  "name": "@gaud_erp/social-networking",
   "version": "0.1.0",
   "type": "module",
   "description": "Gerencia conexoes e publicacoes em redes sociais (LinkedIn primeiro).",

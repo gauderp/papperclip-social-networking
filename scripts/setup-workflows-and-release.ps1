@@ -20,4 +20,4 @@ if (-not $SkipCopy) {
 git push origin main
 git tag "v$Version"
 git push origin "v$Version"
-Write-Host "Done. Verifique Actions e npm view @gauderp/social-networking@$Version"
+Write-Host "Done. Verifique Actions e npm view @gaud_erp/social-networking@$Version"

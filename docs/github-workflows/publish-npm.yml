@@ -1,4 +1,4 @@
-# Publica @gauderp/social-networking no npmjs quando uma tag v* é enviada (release).
+# Publica @gaud_erp/social-networking no npmjs quando uma tag v* é enviada (release).
 name: Publish npm
 
 on:

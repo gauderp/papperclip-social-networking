@@ -1,4 +1,4 @@
-# @gauderp/social-networking
+# @gaud_erp/social-networking
 
 Plugin Paperclip para gerenciar redes sociais no Gaud ERP — conexão de contas, agendamento de posts, histórico e métricas. Slice inicial: **LinkedIn**.
 
@@ -49,10 +49,10 @@ paperclipai plugin install (Resolve-Path .).Path
 
 ### npm (recomendado em produção)
 
-Após a primeira publicação no [npmjs](https://www.npmjs.com/package/@gauderp/social-networking):
+Após a primeira publicação no [npmjs](https://www.npmjs.com/package/@gaud_erp/social-networking):
 
 ```bash
-paperclipai plugin install @gauderp/social-networking@0.1.0
+paperclipai plugin install @gaud_erp/social-networking@0.1.0
 ```
 
 `prepublishOnly` executa o build antes de `npm publish`.
@@ -63,8 +63,8 @@ Cada **tag `v*`** no GitHub dispara o workflow [Publish npm](.github/workflows/p
 
 ### Pré-requisitos (uma vez, no repositório GitHub)
 
-1. Criar/associar o escopo **`@gauderp`** no npmjs (conta ou org com permissão de publish).
-2. Gerar um **Access Token** de publish (Classic: scope `publish`; Granular: Packages read/write para `@gauderp`).
+1. Usar o escopo npm **`@gaud_erp`** ([org no npmjs](https://www.npmjs.com/package/@gaud_erp)).
+2. Gerar um **Access Token** de publish (Classic: scope `publish`; Granular: Packages read/write para `@gaud_erp`).
 3. Adicionar o secret **`NPM_TOKEN`** em *Settings → Secrets and variables → Actions* do repo `gauderp/social-networking`.
 
 ### Fluxo de release
@@ -81,7 +81,7 @@ git tag v0.1.1
 git push origin v0.1.1
 ```
 
-O workflow publica `@gauderp/social-networking@<versão>` no npmjs. Para republicar a mesma versão, é preciso bump ou `npm unpublish` (não recomendado em produção).
+O workflow publica `@gaud_erp/social-networking@<versão>` no npmjs. Para republicar a mesma versão, é preciso bump ou `npm unpublish` (não recomendado em produção).
 
 ### Publicação manual (fallback)
 
@@ -89,7 +89,7 @@ O workflow publica `@gauderp/social-networking@<versão>` no npmjs. Para republi
 pnpm install
 pnpm run typecheck && pnpm test && pnpm run build
 npm publish --access public
-# requer npm login com permissão no escopo @gauderp
+# requer npm login com permissão no escopo @gaud_erp
 ```
 
 ## Build e verificação

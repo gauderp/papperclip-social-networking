@@ -11,12 +11,12 @@ Arquivos canonicos em `.github/workflows/`. Se o push do agente falhar, use as c
 
 ### Pré-requisitos npmjs (uma vez)
 
-1. Criar a **organização ou usuário** com escopo `@gauderp` em [npmjs.com](https://www.npmjs.com/org/create) (erro `Scope not found` = escopo ainda não existe).
-2. O usuário do **`NPM_TOKEN`** deve ser membro da org com permissão de **publish** em `@gauderp`.
+1. Escopo npm oficial: **`@gaud_erp`** — [org/pacote no npmjs](https://www.npmjs.com/package/@gaud_erp).
+2. O usuário do **`NPM_TOKEN`** deve ter permissão de **publish** em `@gaud_erp`.
 
 ### Secret obrigatório (GitHub)
 
-- **`NPM_TOKEN`** — token npm (Classic: `publish`; Granular: read/write em Packages para `@gauderp`)
+- **`NPM_TOKEN`** — token npm (Classic: `publish`; Granular: read/write em Packages para `@gaud_erp`)
 
 ### Tag de release
 

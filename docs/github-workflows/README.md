@@ -20,7 +20,7 @@ O token OAuth do agente **não tem escopo `workflow`**. O GitHub **rejeita** `gi
 
 1. Confirme o secret **`NPM_TOKEN`** em *Settings → Secrets and variables → Actions*.
 2. Crie a release/tag **`v0.1.0`** em *Releases → Draft a new release* (target `main`).
-3. Verifique em *Actions* os runs **CI** e **Publish npm**; depois `npm view @gauderp/social-networking version` → `0.1.0`.
+3. Verifique em *Actions* os runs **CI** e **Publish npm**; depois `npm view @gaud_erp/social-networking version` → `0.1.0`.
 
 ## Opção B — CLI (escopo `workflow`)
 
