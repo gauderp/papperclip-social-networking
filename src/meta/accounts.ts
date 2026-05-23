@@ -1,61 +1,46 @@
 import { randomUUID } from "node:crypto";
 import type { PluginContext } from "@paperclipai/plugin-sdk";
 import { pluginTable } from "../constants.js";
-import type { LinkedInTokenMetadata, NetworkAccountStatus, NetworkStatus } from "./types.js";
+import { getNetworkStatus } from "../linkedin/accounts.js";
+import type { NetworkStatus } from "../linkedin/types.js";
+import { metaDisplayName } from "./oauth.js";
+import type { MetaTokenMetadata } from "./types.js";
 
 const networkAccounts = pluginTable("network_accounts");
 
-const NETWORK_KEY = "linkedin";
+const NETWORK_KEY = "meta";
 
 function accountId(companyId: string): string {
   return `${companyId}:${NETWORK_KEY}`;
 }
 
-function parseMetadata(raw: string | null): LinkedInTokenMetadata | null {
+function parseMetadata(raw: string | null): MetaTokenMetadata | null {
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as LinkedInTokenMetadata;
+    return JSON.parse(raw) as MetaTokenMetadata;
   } catch {
     return null;
   }
 }
 
-export async function getNetworkStatus(
-  ctx: Pick<PluginContext, "db">,
-  companyId: string,
-  networkKey: string = NETWORK_KEY,
-): Promise<NetworkStatus> {
-  const rows = await ctx.db.query<{
-    status: string;
-    display_name: string | null;
-    connected_at: string | null;
-  }>(
-    `SELECT status, display_name, connected_at
-     FROM ${networkAccounts}
-     WHERE company_id = $1 AND network_key = $2
-     LIMIT 1`,
-    [companyId, networkKey],
-  );
-
-  const row = rows[0];
-  return {
-    networkKey,
-    status: (row?.status as NetworkAccountStatus) ?? "disconnected",
-    displayName: row?.display_name ?? null,
-    connectedAt: row?.connected_at ?? null,
-  };
-}
+export { getNetworkStatus };
 
 export async function saveConnectedAccount(
   ctx: PluginContext,
   input: {
     companyId: string;
-    displayName: string | null;
-    tokens: LinkedInTokenMetadata;
+    tokens: MetaTokenMetadata;
   },
 ): Promise<NetworkStatus> {
   const now = new Date().toISOString();
   const metadataJson = JSON.stringify(input.tokens);
+  const displayName = metaDisplayName({
+    pageId: input.tokens.pageId,
+    pageName: input.tokens.pageName,
+    pageAccessToken: input.tokens.pageAccessToken,
+    igBusinessAccountId: input.tokens.igBusinessAccountId,
+    igUsername: input.tokens.igUsername,
+  });
 
   await ctx.db.execute(
     `INSERT INTO ${networkAccounts} (
@@ -71,14 +56,14 @@ export async function saveConnectedAccount(
       accountId(input.companyId),
       input.companyId,
       NETWORK_KEY,
-      input.displayName,
+      displayName,
       now,
       metadataJson,
       now,
     ],
   );
 
-  return getNetworkStatus(ctx, input.companyId);
+  return getNetworkStatus(ctx, input.companyId, NETWORK_KEY);
 }
 
 export async function markAccountError(
@@ -101,7 +86,7 @@ export async function markAccountError(
     [accountId(companyId), companyId, NETWORK_KEY, metadataJson, now],
   );
 
-  return getNetworkStatus(ctx, companyId);
+  return getNetworkStatus(ctx, companyId, NETWORK_KEY);
 }
 
 export async function disconnectAccount(
@@ -123,13 +108,13 @@ export async function disconnectAccount(
     [accountId(companyId), companyId, NETWORK_KEY, now],
   );
 
-  return getNetworkStatus(ctx, companyId);
+  return getNetworkStatus(ctx, companyId, NETWORK_KEY);
 }
 
 export async function getTokenMetadata(
   ctx: Pick<PluginContext, "db">,
   companyId: string,
-): Promise<LinkedInTokenMetadata | null> {
+): Promise<MetaTokenMetadata | null> {
   const rows = await ctx.db.query<{ metadata_json: string | null; status: string }>(
     `SELECT metadata_json, status FROM ${networkAccounts}
      WHERE company_id = $1 AND network_key = $2
@@ -145,26 +130,16 @@ export function newAccountRowId(): string {
   return randomUUID();
 }
 
-export function linkedInAuthorUrn(tokens: LinkedInTokenMetadata | null): string | null {
-  const memberId = tokens?.memberId;
-  if (typeof memberId !== "string" || memberId.length === 0) {
-    return null;
-  }
-  if (memberId.startsWith("urn:li:")) {
-    return memberId;
-  }
-  return `urn:li:person:${memberId}`;
-}
-
-export async function getLinkedInPublishCredentials(
+export async function getMetaPublishCredentials(
   ctx: Pick<PluginContext, "db">,
   companyId: string,
-): Promise<{ accessToken: string; authorUrn: string } | null> {
+): Promise<{ pageId: string; pageAccessToken: string } | null> {
   const tokens = await getTokenMetadata(ctx, companyId);
-  const accessToken = tokens?.accessToken;
-  const authorUrn = linkedInAuthorUrn(tokens);
-  if (!accessToken || !authorUrn) {
+  if (!tokens?.pageId || !tokens.pageAccessToken) {
     return null;
   }
-  return { accessToken, authorUrn };
+  return {
+    pageId: tokens.pageId,
+    pageAccessToken: tokens.pageAccessToken,
+  };
 }

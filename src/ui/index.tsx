@@ -945,6 +945,297 @@ export function XPage({ context }: PluginPageProps) {
   );
 }
 
+type MetaScheduledData = {
+  posts: ScheduledPostItem[];
+};
+
+export function MetaPage({ context }: PluginPageProps) {
+  const location = useHostLocation();
+  const navigation = useHostNavigation();
+  const { data, loading, error, refresh } = usePluginData<OverviewData>("overview");
+  const startOAuth = usePluginAction("meta-start-oauth");
+  const completeOAuth = usePluginAction("meta-complete-oauth");
+  const disconnect = usePluginAction("meta-disconnect");
+  const schedulePost = usePluginAction("schedule-meta-post");
+  const cancelScheduled = usePluginAction("cancel-scheduled-post");
+  const {
+    data: scheduledData,
+    loading: scheduledLoading,
+    error: scheduledError,
+    refresh: refreshScheduled,
+  } = usePluginData<MetaScheduledData>("meta-scheduled-posts");
+
+  const [busy, setBusy] = useState(false);
+  const [scheduleBody, setScheduleBody] = useState("");
+  const [scheduleAtLocal, setScheduleAtLocal] = useState("");
+  const [scheduling, setScheduling] = useState(false);
+  const [scheduleMessage, setScheduleMessage] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionInfo, setActionInfo] = useState<string | null>(null);
+
+  const status = data?.networks?.find((n) => n.networkKey === "meta")?.status ?? "disconnected";
+  const displayName = data?.networks?.find((n) => n.networkKey === "meta")?.displayName ?? null;
+  const companyId = context.companyId ?? "";
+  const companyPrefix = context.companyPrefix ?? "CUS";
+
+  useEffect(() => {
+    if (!companyId || typeof window === "undefined") return;
+
+    const params = new URLSearchParams(location.search);
+    const code = params.get("code");
+    const state = params.get("state");
+    const oauthError = params.get("error");
+
+    if (oauthError) {
+      setActionError(`Meta recusou a autorizacao: ${oauthError}`);
+      navigation.navigate(companyPluginPath(companyPrefix, ROUTES.meta));
+      return;
+    }
+
+    if (!code || !state) return;
+
+    let cancelled = false;
+    setBusy(true);
+    setActionError(null);
+
+    void completeOAuth({
+      companyId,
+      code,
+      state,
+      publicOrigin: window.location.origin,
+      companyPrefix,
+    })
+      .then((result) => {
+        if (cancelled) return;
+        const payload = result as {
+          ok: boolean;
+          error?: string;
+          status?: NetworkStatusPayload;
+        };
+        if (!payload.ok) {
+          setActionError(payload.error ?? "Falha ao conectar conta Meta.");
+        } else {
+          setActionInfo(
+            payload.status?.displayName
+              ? `Conta conectada: ${payload.status.displayName}`
+              : "Conta Meta conectada.",
+          );
+        }
+        void refresh();
+        navigation.navigate(companyPluginPath(companyPrefix, ROUTES.meta));
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setActionError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setBusy(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [companyId, companyPrefix, completeOAuth, location.search, navigation, refresh]);
+
+  async function handleConnect() {
+    if (!companyId || typeof window === "undefined") return;
+    setBusy(true);
+    setActionError(null);
+    setActionInfo(null);
+    try {
+      const result = (await startOAuth({
+        companyId,
+        publicOrigin: window.location.origin,
+        companyPrefix,
+      })) as { authorizeUrl: string };
+      window.location.assign(result.authorizeUrl);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+      setBusy(false);
+    }
+  }
+
+  async function handleSchedulePost() {
+    if (!companyId) return;
+    setScheduling(true);
+    setScheduleMessage(null);
+    try {
+      await schedulePost({
+        companyId,
+        body: scheduleBody,
+        scheduledAt: localDatetimeToIso(scheduleAtLocal),
+      });
+      setScheduleBody("");
+      setScheduleAtLocal("");
+      setScheduleMessage("Publicacao agendada com sucesso.");
+      await refreshScheduled();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const labels: Record<string, string> = {
+        body_required: "Informe o texto do post.",
+        scheduled_at_required: "Informe data e hora.",
+        scheduled_at_invalid: "Data/hora invalida.",
+        scheduled_at_must_be_future: "Agende para um horario no futuro.",
+      };
+      setScheduleMessage(labels[message] ?? message);
+    } finally {
+      setScheduling(false);
+    }
+  }
+
+  async function handleCancelScheduled(postId: string) {
+    if (!companyId) return;
+    setScheduling(true);
+    setScheduleMessage(null);
+    try {
+      await cancelScheduled({ companyId, postId });
+      setScheduleMessage("Agendamento cancelado.");
+      await refreshScheduled();
+    } catch (err) {
+      setScheduleMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setScheduling(false);
+    }
+  }
+
+  async function handleDisconnect() {
+    if (!companyId) return;
+    setBusy(true);
+    setActionError(null);
+    setActionInfo(null);
+    try {
+      await disconnect({ companyId });
+      setActionInfo("Conta Meta desconectada.");
+      await refresh();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (loading) return <div style={{ padding: "1.5rem" }}>Carregando Meta...</div>;
+  if (error) return <div style={{ padding: "1.5rem" }}>Erro: {error.message}</div>;
+
+  return (
+    <div style={{ padding: "1.5rem", display: "grid", gap: "1rem", maxWidth: 900 }}>
+      <h1 style={{ margin: 0 }}>Meta (Facebook + Instagram)</h1>
+      <p style={{ margin: 0, opacity: 0.85 }}>
+        OAuth Graph API: Pagina Facebook e conta Instagram Business vinculada. Posts agendados
+        publicam no feed da Pagina FB via job a cada 5 minutos.
+      </p>
+
+      {actionError ? (
+        <div style={{ color: "#b91c1c", fontSize: "0.9rem" }}>{actionError}</div>
+      ) : null}
+      {actionInfo ? (
+        <div style={{ color: "#166534", fontSize: "0.9rem" }}>{actionInfo}</div>
+      ) : null}
+
+      <section style={{ display: "grid", gap: "0.5rem" }}>
+        <h2 style={{ margin: 0, fontSize: "1rem" }}>Conexao</h2>
+        <div>
+          Status: <strong>{status}</strong>
+          {displayName ? ` · ${displayName}` : ""}
+        </div>
+        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            disabled={busy || status === "connected"}
+            onClick={() => void handleConnect()}
+          >
+            {busy ? "Conectando..." : "Conectar Meta (Facebook)"}
+          </button>
+          <button
+            type="button"
+            disabled={busy || status === "disconnected"}
+            onClick={() => void handleDisconnect()}
+          >
+            Desconectar
+          </button>
+        </div>
+        <p style={{ margin: 0, fontSize: "0.8rem", opacity: 0.65 }}>
+          Redirect OAuth:{" "}
+          {typeof window !== "undefined"
+            ? `${window.location.origin}/${companyPrefix}/${ROUTES.meta}`
+            : `/${companyPrefix}/${ROUTES.meta}`}
+          . Registre no app Meta for Developers (Facebook Login).
+        </p>
+        <p style={{ margin: 0, fontSize: "0.8rem", opacity: 0.65 }}>
+          Escopos e dados persistidos: ver docs/META_OAUTH.md no pacote do plugin. Revisao de
+          seguranca obrigatoria antes de producao.
+        </p>
+      </section>
+
+      <section style={{ display: "grid", gap: "0.5rem" }}>
+        <h2 style={{ margin: 0, fontSize: "1rem" }}>Agendar publicacao (feed da Pagina)</h2>
+        <textarea
+          placeholder="Texto do post"
+          rows={4}
+          style={{ width: "100%" }}
+          value={scheduleBody}
+          onChange={(e) => setScheduleBody(e.target.value)}
+          disabled={scheduling}
+        />
+        <input
+          type="datetime-local"
+          min={minScheduleDatetimeLocal()}
+          value={scheduleAtLocal}
+          onChange={(e) => setScheduleAtLocal(e.target.value)}
+          disabled={scheduling}
+        />
+        <button
+          type="button"
+          disabled={scheduling || !scheduleBody.trim() || !scheduleAtLocal}
+          onClick={() => void handleSchedulePost()}
+        >
+          {scheduling ? "Salvando..." : "Agendar publicacao"}
+        </button>
+        {scheduleMessage ? (
+          <p style={{ margin: 0, fontSize: "0.85rem", opacity: 0.8 }}>{scheduleMessage}</p>
+        ) : null}
+        {status !== "connected" ? (
+          <p style={{ margin: 0, fontSize: "0.8rem", opacity: 0.65 }}>
+            Conecte a conta Meta antes de agendar. O job publica no feed da Pagina Facebook.
+          </p>
+        ) : null}
+        {scheduledLoading ? (
+          <p style={{ margin: 0, opacity: 0.75 }}>Carregando agendamentos...</p>
+        ) : scheduledError ? (
+          <p style={{ margin: 0 }}>Erro: {scheduledError.message}</p>
+        ) : (scheduledData?.posts ?? []).length === 0 ? (
+          <p style={{ margin: 0, opacity: 0.75 }}>Nenhum post agendado.</p>
+        ) : (
+          <ul style={{ margin: 0, paddingLeft: "1.25rem", display: "grid", gap: "0.5rem" }}>
+            {(scheduledData?.posts ?? []).map((post) => (
+              <li key={post.id}>
+                <div style={{ fontSize: "0.8rem", opacity: 0.7 }}>
+                  {formatWhen(post.scheduledAt)} · {post.status}
+                  {post.errorMessage ? ` — ${post.errorMessage}` : ""}
+                </div>
+                <p style={{ margin: "0.25rem 0 0", whiteSpace: "pre-wrap" }}>{post.body}</p>
+                {post.status === "pending" ? (
+                  <button
+                    type="button"
+                    style={{ marginTop: "0.35rem" }}
+                    disabled={scheduling}
+                    onClick={() => void handleCancelScheduled(post.id)}
+                  >
+                    Cancelar
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <p style={{ margin: 0, fontSize: "0.8rem", opacity: 0.6 }}>
+        Empresa: {companyId || "—"}
+      </p>
+    </div>
+  );
+}
+
 export function SettingsPage(_props: PluginSettingsPageProps) {
   return (
     <div style={{ padding: "1rem", display: "grid", gap: "0.75rem", maxWidth: 640 }}>
@@ -955,6 +1246,7 @@ export function SettingsPage(_props: PluginSettingsPageProps) {
       <ul style={{ margin: 0, paddingLeft: "1.25rem" }}>
         <li>LinkedIn: linkedinClientIdSecretRef, linkedinClientSecretSecretRef</li>
         <li>X: xClientIdSecretRef, xClientSecretSecretRef</li>
+        <li>Meta: metaAppIdSecretRef, metaAppSecretSecretRef</li>
       </ul>
     </div>
   );

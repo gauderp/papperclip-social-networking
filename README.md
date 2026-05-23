@@ -109,7 +109,39 @@ CI no GitHub Actions executa os mesmos passos em cada push/PR para `main`.
 | `/:prefix/social` | Hub das redes |
 | `/:prefix/social-linkedin` | LinkedIn — conexão, agendamento, histórico |
 
+## Capabilities para agentes Paperclip
+
+Após `paperclipai plugin install`, o host registra as **tools** declaradas no manifest (`PluginToolRegistry`). Para cada empresa, reconcilie a skill gerenciada e atribua-a aos agentes de engenharia:
+
+```bash
+# Via UI do plugin: action setup-company-capabilities (settings)
+# Ou via worker SDK: ctx.skills.managed.reconcile("linkedin-agent", companyId)
+```
+
+| Superfície | Uso |
+|------------|-----|
+| `manifest.tools[]` + `ctx.tools.register` | Descoberta na ativação do plugin; execução via `gauderp.social-networking:<tool>` |
+| `manifest.skills[]` + `skills.managed` | Documentação operacional na biblioteca da empresa (`plugin/gauderp-social-networking/linkedin-agent`) |
+| `apiRoutes` (`auth: board-or-agent`) | Fallback HTTP quando o adapter ainda não expõe plugin tools |
+
+Detalhes: `src/agent-capabilities.ts` e [PLUGIN_AUTHORING_GUIDE](https://github.com/paperclipai/paperclip/blob/master/doc/plugins/PLUGIN_AUTHORING_GUIDE.md) (Managed skills + agent tools).
+
+## Agentes Paperclip (descoberta na instalação)
+
+Após `paperclipai plugin install`, o host registra as **tools** do manifest no `PluginToolRegistry` e o worker reconcilia a **managed skill** `linkedin-agent` para cada empresa (`companies.read`).
+
+| Superfície | O que o agente recebe |
+|------------|------------------------|
+| Tools | `gauderp.social-networking:linkedin-network-status`, `:publish-linkedin-now`, `:schedule-linkedin-post`, `:list-linkedin-scheduled-posts`, `:cancel-linkedin-scheduled-post` |
+| Skill | `plugin/gauderp-social-networking/linkedin-agent` — ver `src/agent-capabilities.ts` |
+| HTTP | Rotas `board-or-agent` em `/api/plugins/gauderp.social-networking/api/...` |
+
+Reconciliar manualmente por empresa (UI/action): `setup-company-capabilities` com `companyId`.
+
+Padrão para novos plugins: manifest `tools[]` + `skills[]`, capabilities `agent.tools.register` + `skills.managed`, handlers em `ctx.tools.register`, reconcile no `setup` — detalhes em `src/agent-capabilities.ts`.
+
 ## Manifest
 
 - Plugin id: `gauderp.social-networking`
-- Capabilities: UI, database namespace, jobs, outbound HTTP, secret refs
+- Capabilities: UI, database namespace, jobs, outbound HTTP, secret refs, **agent tools**, **managed skills**, **agent.tools.register**, **skills.managed**
+- Agent tools: `linkedin-network-status`, `publish-linkedin-now`, `schedule-linkedin-post`, `list-linkedin-scheduled-posts`, `cancel-linkedin-scheduled-post`

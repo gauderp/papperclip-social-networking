@@ -3,8 +3,16 @@ export type SchedulePostInput = {
   scheduledAt: string;
 };
 
+export type PublishNowInput = {
+  body: string;
+};
+
 export type ValidationResult =
   | { ok: true; body: string; scheduledAt: string }
+  | { ok: false; error: string };
+
+export type PublishNowValidationResult =
+  | { ok: true; body: string }
   | { ok: false; error: string };
 
 export function validateSchedulePostInput(input: SchedulePostInput): ValidationResult {
@@ -35,4 +43,15 @@ export function validateSchedulePostInput(input: SchedulePostInput): ValidationR
     body,
     scheduledAt: new Date(scheduledAtMs).toISOString(),
   };
+}
+
+export function validatePublishNowInput(input: PublishNowInput): PublishNowValidationResult {
+  const body = input.body?.trim() ?? "";
+  if (!body) {
+    return { ok: false, error: "body_required" };
+  }
+  if (body.length > 3000) {
+    return { ok: false, error: "body_too_long" };
+  }
+  return { ok: true, body };
 }

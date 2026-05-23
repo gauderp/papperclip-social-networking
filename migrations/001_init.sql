@@ -1,40 +1,40 @@
-CREATE TABLE IF NOT EXISTS network_accounts (
-  id TEXT PRIMARY KEY,
-  company_id TEXT NOT NULL,
-  network_key TEXT NOT NULL,
-  display_name TEXT,
-  status TEXT NOT NULL DEFAULT 'disconnected',
-  connected_at TEXT,
-  metadata_json TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+CREATE TABLE plugin_gauderp_social_networking_73c869526e.network_accounts (
+  id uuid PRIMARY KEY,
+  company_id text NOT NULL,
+  network_key text NOT NULL,
+  display_name text,
+  status text NOT NULL DEFAULT 'disconnected',
+  connected_at timestamptz,
+  metadata_json text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (company_id, network_key)
 );
 
-CREATE TABLE IF NOT EXISTS scheduled_posts (
-  id TEXT PRIMARY KEY,
-  company_id TEXT NOT NULL,
-  network_key TEXT NOT NULL,
-  body TEXT NOT NULL,
-  media_json TEXT,
-  scheduled_at TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending',
-  published_at TEXT,
-  external_post_id TEXT,
-  error_message TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+CREATE TABLE plugin_gauderp_social_networking_73c869526e.scheduled_posts (
+  id uuid PRIMARY KEY,
+  company_id text NOT NULL,
+  network_key text NOT NULL,
+  body text NOT NULL,
+  media_json text,
+  scheduled_at timestamptz NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  published_at timestamptz,
+  external_post_id text,
+  error_message text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS post_metrics (
-  id TEXT PRIMARY KEY,
-  company_id TEXT NOT NULL,
-  network_key TEXT NOT NULL,
-  external_post_id TEXT NOT NULL,
-  likes INTEGER NOT NULL DEFAULT 0,
-  comments INTEGER NOT NULL DEFAULT 0,
-  shares INTEGER NOT NULL DEFAULT 0,
-  impressions INTEGER,
-  fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
-  raw_json TEXT
+CREATE TABLE plugin_gauderp_social_networking_73c869526e.post_metrics (
+  id uuid PRIMARY KEY,
+  company_id text NOT NULL,
+  network_key text NOT NULL,
+  external_post_id text NOT NULL,
+  likes integer NOT NULL DEFAULT 0,
+  comments integer NOT NULL DEFAULT 0,
+  shares integer NOT NULL DEFAULT 0,
+  impressions integer,
+  fetched_at timestamptz NOT NULL DEFAULT now(),
+  raw_json text
 );

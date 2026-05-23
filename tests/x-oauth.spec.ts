@@ -2,8 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { createTestHarness, type TestHarness } from "@paperclipai/plugin-sdk/testing";
 import manifest from "../src/manifest.js";
 import plugin from "../src/worker.js";
-import { buildRedirectUri, createOAuthState, verifyOAuthState } from "../src/linkedin/oauth.js";
 import type { NetworkStatus } from "../src/linkedin/types.js";
+import {
+  buildRedirectUri,
+  codeChallengeFromVerifier,
+  createOAuthState,
+  verifyOAuthState,
+} from "../src/x/oauth.js";
 
 type AccountRow = {
   id: string;
@@ -29,9 +34,6 @@ function installMemoryDb(harness: TestHarness) {
         if (networkKey && row.network_key !== networkKey) return false;
         return true;
       });
-      if (sql.includes("network_key, status")) {
-        return rows.map((row) => ({ network_key: row.network_key, status: row.status }));
-      }
       return rows.map((row) => ({
         status: row.status,
         display_name: row.display_name,
@@ -52,7 +54,6 @@ function installMemoryDb(harness: TestHarness) {
     const companyId = p[1] as string;
     const networkKey = p[2] as string;
     const key = `${companyId}:${networkKey}`;
-    const existing = accounts.get(key);
     const updatedAt = (p[p.length - 1] as string) ?? new Date().toISOString();
 
     if (sql.includes("'connected'")) {
@@ -82,7 +83,7 @@ function installMemoryDb(harness: TestHarness) {
         id: p[0] as string,
         company_id: companyId,
         network_key: networkKey,
-        display_name: existing?.display_name ?? null,
+        display_name: null,
         status: "error",
         connected_at: null,
         metadata_json: (p[3] as string | null) ?? null,
@@ -96,46 +97,48 @@ function installMemoryDb(harness: TestHarness) {
   return accounts;
 }
 
-describe("LinkedIn OAuth", () => {
-  const companyId = "co-test";
+describe("X OAuth", () => {
+  const companyId = "co-test-x";
   const companyPrefix = "CUS";
   const publicOrigin = "http://127.0.0.1:3100";
-  const credentials = { clientId: "linkedin-client-id", clientSecret: "linkedin-client-secret" };
+  const credentials = { clientId: "x-client-id", clientSecret: "x-client-secret" };
 
-  it("builds redirect URI and signed OAuth state", () => {
+  it("builds redirect URI, PKCE challenge and signed OAuth state", () => {
     const redirectUri = buildRedirectUri(publicOrigin, companyPrefix);
-    expect(redirectUri).toBe("http://127.0.0.1:3100/CUS/social-linkedin");
+    expect(redirectUri).toBe("http://127.0.0.1:3100/CUS/social-x");
 
-    const state = createOAuthState(companyId, credentials.clientSecret);
+    const { state, codeVerifier } = createOAuthState(companyId, credentials.clientSecret);
     const payload = verifyOAuthState(state, credentials.clientSecret);
     expect(payload.companyId).toBe(companyId);
+    expect(payload.codeVerifier).toBe(codeVerifier);
+    expect(codeChallengeFromVerifier(codeVerifier)).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 
   it("starts OAuth with authorize URL when secret refs are configured", async () => {
     const harness = createTestHarness({
       manifest,
       config: {
-        linkedinClientIdSecretRef: "LINKEDIN_CLIENT_ID",
-        linkedinClientSecretSecretRef: "LINKEDIN_CLIENT_SECRET",
+        xClientIdSecretRef: "X_CLIENT_ID",
+        xClientSecretSecretRef: "X_CLIENT_SECRET",
       },
     });
     await plugin.definition.setup(harness.ctx);
 
     harness.ctx.secrets.resolve = async (ref) => {
-      if (ref === "LINKEDIN_CLIENT_ID") return credentials.clientId;
-      if (ref === "LINKEDIN_CLIENT_SECRET") return credentials.clientSecret;
+      if (ref === "X_CLIENT_ID") return credentials.clientId;
+      if (ref === "X_CLIENT_SECRET") return credentials.clientSecret;
       return "";
     };
 
-    const result = (await harness.performAction("linkedin-start-oauth", {
+    const result = (await harness.performAction("x-start-oauth", {
       companyId,
       publicOrigin,
       companyPrefix,
     })) as { authorizeUrl: string; state: string; redirectUri: string };
 
     expect(result.redirectUri).toBe(buildRedirectUri(publicOrigin, companyPrefix));
-    expect(result.authorizeUrl).toContain("linkedin.com/oauth/v2/authorization");
-    expect(result.authorizeUrl).toContain(encodeURIComponent(credentials.clientId));
+    expect(result.authorizeUrl).toContain("twitter.com/i/oauth2/authorize");
+    expect(result.authorizeUrl).toContain("code_challenge=");
     expect(verifyOAuthState(result.state, credentials.clientSecret).companyId).toBe(companyId);
   });
 
@@ -143,46 +146,48 @@ describe("LinkedIn OAuth", () => {
     const harness = createTestHarness({
       manifest,
       config: {
-        linkedinClientIdSecretRef: "LINKEDIN_CLIENT_ID",
-        linkedinClientSecretSecretRef: "LINKEDIN_CLIENT_SECRET",
+        xClientIdSecretRef: "X_CLIENT_ID",
+        xClientSecretSecretRef: "X_CLIENT_SECRET",
       },
     });
     const accounts = installMemoryDb(harness);
     await plugin.definition.setup(harness.ctx);
 
     harness.ctx.secrets.resolve = async (ref) => {
-      if (ref === "LINKEDIN_CLIENT_ID") return credentials.clientId;
-      if (ref === "LINKEDIN_CLIENT_SECRET") return credentials.clientSecret;
+      if (ref === "X_CLIENT_ID") return credentials.clientId;
+      if (ref === "X_CLIENT_SECRET") return credentials.clientSecret;
       return "";
     };
 
     const redirectUri = buildRedirectUri(publicOrigin, companyPrefix);
-    const state = createOAuthState(companyId, credentials.clientSecret);
+    const { state, codeVerifier } = createOAuthState(companyId, credentials.clientSecret);
 
     harness.ctx.http.fetch = vi.fn(async (url, init) => {
-      if (url === "https://www.linkedin.com/oauth/v2/accessToken") {
+      if (url === "https://api.twitter.com/2/oauth2/token") {
+        const body = init?.body?.toString() ?? "";
+        expect(body).toContain(`code_verifier=${encodeURIComponent(codeVerifier)}`);
         return new Response(
           JSON.stringify({
-            access_token: "access-token-test",
-            expires_in: 3600,
-            refresh_token: "refresh-token-test",
-            scope: "openid profile email w_member_social",
+            access_token: "x-access-token",
+            expires_in: 7200,
+            refresh_token: "x-refresh",
+            scope: "tweet.write users.read offline.access",
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
       }
-      if (url === "https://api.linkedin.com/v2/userinfo") {
+      if (url.startsWith("https://api.twitter.com/2/users/me")) {
         return new Response(
-          JSON.stringify({ sub: "member-123", name: "Gaud ERP" }),
+          JSON.stringify({ data: { id: "12345", name: "Gaud", username: "gauderp" } }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
       }
-      return new Response("not found", { status: 404, statusText: "Not Found" });
+      return new Response("not found", { status: 404 });
     }) as typeof harness.ctx.http.fetch;
 
-    const result = (await harness.performAction("linkedin-complete-oauth", {
+    const result = (await harness.performAction("x-complete-oauth", {
       companyId,
-      code: "auth-code-xyz",
+      code: "auth-code-x",
       state,
       publicOrigin,
       companyPrefix,
@@ -190,24 +195,22 @@ describe("LinkedIn OAuth", () => {
 
     expect(result.ok).toBe(true);
     expect(result.status.status).toBe("connected");
-    expect(result.status.displayName).toBe("Gaud ERP");
+    expect(result.status.displayName).toBe("Gaud");
 
-    const stored = accounts.get(`${companyId}:linkedin`);
+    const stored = accounts.get(`${companyId}:x`);
     expect(stored?.status).toBe("connected");
     const metadata = JSON.parse(stored?.metadata_json ?? "{}") as {
       accessToken: string;
-      refreshToken: string;
-      memberId: string;
+      userId: string;
     };
-    expect(metadata.accessToken).toBe("access-token-test");
-    expect(metadata.refreshToken).toBe("refresh-token-test");
-    expect(metadata.memberId).toBe("member-123");
+    expect(metadata.accessToken).toBe("x-access-token");
+    expect(metadata.userId).toBe("12345");
 
     const apiStatus = (await plugin.definition.onApiRequest?.({
       routeKey: "network-status",
       method: "GET",
-      path: "/networks/linkedin/status",
-      params: { networkKey: "linkedin" },
+      path: "/networks/x/status",
+      params: { networkKey: "x" },
       query: { companyId },
       body: null,
       actor: { actorType: "user", actorId: "user-1" },
@@ -217,27 +220,26 @@ describe("LinkedIn OAuth", () => {
 
     expect(apiStatus?.status).toBe(200);
     expect(apiStatus?.body.status).toBe("connected");
-    expect(apiStatus?.body.displayName).toBe("Gaud ERP");
   });
 
   it("marks account as error when token exchange fails", async () => {
     const harness = createTestHarness({
       manifest,
       config: {
-        linkedinClientIdSecretRef: "LINKEDIN_CLIENT_ID",
-        linkedinClientSecretSecretRef: "LINKEDIN_CLIENT_SECRET",
+        xClientIdSecretRef: "X_CLIENT_ID",
+        xClientSecretSecretRef: "X_CLIENT_SECRET",
       },
     });
     installMemoryDb(harness);
     await plugin.definition.setup(harness.ctx);
 
     harness.ctx.secrets.resolve = async (ref) => {
-      if (ref === "LINKEDIN_CLIENT_ID") return credentials.clientId;
-      if (ref === "LINKEDIN_CLIENT_SECRET") return credentials.clientSecret;
+      if (ref === "X_CLIENT_ID") return credentials.clientId;
+      if (ref === "X_CLIENT_SECRET") return credentials.clientSecret;
       return "";
     };
 
-    const state = createOAuthState(companyId, credentials.clientSecret);
+    const { state } = createOAuthState(companyId, credentials.clientSecret);
     harness.ctx.http.fetch = vi.fn(async () => {
       return new Response(
         JSON.stringify({ error: "invalid_grant", error_description: "Code expired" }),
@@ -245,7 +247,7 @@ describe("LinkedIn OAuth", () => {
       );
     }) as typeof harness.ctx.http.fetch;
 
-    const result = (await harness.performAction("linkedin-complete-oauth", {
+    const result = (await harness.performAction("x-complete-oauth", {
       companyId,
       code: "bad-code",
       state,
@@ -256,35 +258,5 @@ describe("LinkedIn OAuth", () => {
     expect(result.ok).toBe(false);
     expect(result.status.status).toBe("error");
     expect(result.error).toContain("Falha ao trocar code");
-  });
-
-  it("disconnect clears connected status", async () => {
-    const harness = createTestHarness({
-      manifest,
-      config: {
-        linkedinClientIdSecretRef: "LINKEDIN_CLIENT_ID",
-        linkedinClientSecretSecretRef: "LINKEDIN_CLIENT_SECRET",
-      },
-    });
-    const accounts = installMemoryDb(harness);
-    await plugin.definition.setup(harness.ctx);
-
-    accounts.set(`${companyId}:linkedin`, {
-      id: `${companyId}:linkedin`,
-      company_id: companyId,
-      network_key: "linkedin",
-      display_name: "Gaud ERP",
-      status: "connected",
-      connected_at: new Date().toISOString(),
-      metadata_json: JSON.stringify({ accessToken: "token" }),
-      updated_at: new Date().toISOString(),
-    });
-
-    const result = (await harness.performAction("linkedin-disconnect", {
-      companyId,
-    })) as { status: NetworkStatus };
-
-    expect(result.status.status).toBe("disconnected");
-    expect(accounts.get(`${companyId}:linkedin`)?.status).toBe("disconnected");
   });
 });

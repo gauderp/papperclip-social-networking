@@ -1,5 +1,9 @@
 import type { PluginContext } from "@paperclipai/plugin-sdk";
+import { pluginTable } from "../constants.js";
 import type { NormalizedPostMetrics, PostHistoryItem } from "../linkedin/types.js";
+
+const scheduledPosts = pluginTable("scheduled_posts");
+const postMetrics = pluginTable("post_metrics");
 
 type HistoryRow = {
   id: string;
@@ -33,17 +37,17 @@ export async function listLinkedInPostHistory(
        pm.shares,
        pm.impressions,
        pm.fetched_at
-     FROM scheduled_posts sp
-     LEFT JOIN post_metrics pm
+     FROM ${scheduledPosts} sp
+     LEFT JOIN ${postMetrics} pm
        ON pm.company_id = sp.company_id
       AND pm.network_key = sp.network_key
       AND pm.external_post_id = sp.external_post_id
       AND sp.external_post_id IS NOT NULL
-     WHERE sp.company_id = ?
+     WHERE sp.company_id = $1
        AND sp.network_key = 'linkedin'
        AND sp.status IN ('published', 'failed')
      ORDER BY COALESCE(sp.published_at, sp.created_at) DESC
-     LIMIT ?`,
+     LIMIT $2`,
     [companyId, limit],
   );
 
@@ -73,8 +77,8 @@ export async function listPublishedPostsForSync(
 ): Promise<Array<{ externalPostId: string }>> {
   const rows = await ctx.db.query<{ external_post_id: string }>(
     `SELECT external_post_id
-     FROM scheduled_posts
-     WHERE company_id = ?
+     FROM ${scheduledPosts}
+     WHERE company_id = $1
        AND network_key = 'linkedin'
        AND status = 'published'
        AND external_post_id IS NOT NULL
@@ -93,11 +97,11 @@ export async function upsertPostMetrics(
 ): Promise<void> {
   const id = crypto.randomUUID();
   await ctx.db.execute(
-    `INSERT INTO post_metrics (
+    `INSERT INTO ${postMetrics} (
        id, company_id, network_key, external_post_id,
        likes, comments, shares, impressions, fetched_at, raw_json
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
-     ON CONFLICT(company_id, network_key, external_post_id) DO UPDATE SET
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), $9)
+     ON CONFLICT (company_id, network_key, external_post_id) DO UPDATE SET
        likes = excluded.likes,
        comments = excluded.comments,
        shares = excluded.shares,

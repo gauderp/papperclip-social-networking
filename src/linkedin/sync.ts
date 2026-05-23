@@ -1,4 +1,7 @@
 import type { PluginContext } from "@paperclipai/plugin-sdk";
+import { pluginTable } from "../constants.js";
+
+const networkAccounts = pluginTable("network_accounts");
 import { listPublishedPostsForSync, upsertPostMetrics } from "../db/post-history.js";
 import { getNetworkStatus, getTokenMetadata } from "./accounts.js";
 import { fetchLinkedInPostMetrics } from "./metrics-api.js";
@@ -62,7 +65,7 @@ export async function syncLinkedInMetricsForCompany(
 export async function syncAllConnectedLinkedInAccounts(ctx: PluginContext): Promise<void> {
   const accounts = await ctx.db.query<{ company_id: string }>(
     `SELECT company_id
-     FROM network_accounts
+     FROM ${networkAccounts}
      WHERE network_key = 'linkedin' AND status = 'connected'`,
   );
 

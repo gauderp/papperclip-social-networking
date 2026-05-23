@@ -1,5 +1,14 @@
 import { randomUUID } from "node:crypto";
+import { PLUGIN_DB_NAMESPACE } from "../../src/constants.js";
 import type { PluginDb } from "../../src/scheduled-posts/store.js";
+
+function normalizeSql(sql: string): string {
+  return sql
+    .replace(new RegExp(`${PLUGIN_DB_NAMESPACE}\\.`, "gi"), "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
 
 type ScheduledPostRow = {
   id: string;
@@ -87,7 +96,7 @@ export function createMemoryPluginDb(initial?: Partial<MemoryDbState>): MemoryPl
     },
     namespace: "test_memory",
     async query<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
-      const normalized = sql.replace(/\s+/g, " ").trim().toLowerCase();
+      const normalized = normalizeSql(sql);
 
       if (normalized.includes("from scheduled_posts sp") && normalized.includes("left join post_metrics")) {
         const companyId = params[0] as string;
@@ -138,14 +147,22 @@ export function createMemoryPluginDb(initial?: Partial<MemoryDbState>): MemoryPl
           .slice(0, 25) as T[];
       }
 
-      if (normalized.includes("from scheduled_posts where id = ?")) {
-        if (normalized.includes("company_id = ?")) {
+      if (normalized.includes("from scheduled_posts where id = $1")) {
+        if (normalized.includes("company_id = $2")) {
           const [id, companyId] = params as [string, string];
           const row = state.scheduled_posts.find((r) => r.id === id && r.company_id === companyId);
           return row ? [row] as T[] : [];
         }
         const [id] = params as [string];
         const row = state.scheduled_posts.find((r) => r.id === id);
+        if (row) {
+          if (normalized.includes("select status, external_post_id")) {
+            return [{ status: row.status, external_post_id: row.external_post_id }] as T[];
+          }
+          if (normalized.includes("select status, error_message")) {
+            return [{ status: row.status, error_message: row.error_message }] as T[];
+          }
+        }
         return row ? [row] as T[] : [];
       }
 
@@ -174,12 +191,12 @@ export function createMemoryPluginDb(initial?: Partial<MemoryDbState>): MemoryPl
         return row ? [{ metadata_json: row.metadata_json, status: row.status }] as T[] : [];
       }
 
-      if (normalized.includes("from scheduled_posts where company_id = ? and network_key = ?")) {
+      if (normalized.includes("from scheduled_posts where company_id = $1 and network_key = $2")) {
         const [companyId, networkKey, ...rest] = params as [string, string, ...unknown[]];
         let rows = state.scheduled_posts.filter(
           (r) => r.company_id === companyId && r.network_key === networkKey,
         );
-        if (normalized.includes("and status = ?")) {
+        if (normalized.includes("and status = $3")) {
           const status = rest[0] as string;
           rows = rows.filter((r) => r.status === status);
         }
@@ -214,7 +231,7 @@ export function createMemoryPluginDb(initial?: Partial<MemoryDbState>): MemoryPl
     },
 
     async execute(sql: string, params: unknown[] = []): Promise<{ rowCount: number }> {
-      const normalized = sql.replace(/\s+/g, " ").trim().toLowerCase();
+      const normalized = normalizeSql(sql);
 
       if (normalized.startsWith("insert into scheduled_posts")) {
         const [
@@ -266,24 +283,27 @@ export function createMemoryPluginDb(initial?: Partial<MemoryDbState>): MemoryPl
         let connectedAt: string | null = null;
         let metadataJson: string | null = null;
 
-        if (params.length === 5) {
-          [id, companyId, networkKey, status, metadataJson] = params as [
-            string,
+        if (params.length === 4) {
+          [id, companyId, networkKey] = params as [string, string, string];
+          status = "disconnected";
+        } else if (params.length === 5) {
+          [id, companyId, networkKey, metadataJson] = params as [
             string,
             string,
             string,
             string | null,
           ];
+          status = "error";
         } else {
-          [id, companyId, networkKey, displayName, status, connectedAt, metadataJson] = params as [
+          [id, companyId, networkKey, displayName, connectedAt, metadataJson] = params as [
             string,
             string,
             string,
             string | null,
             string,
-            string | null,
             string | null,
           ];
+          status = "connected";
         }
         const existing = state.network_accounts.findIndex(
           (r) => r.company_id === companyId && r.network_key === networkKey,

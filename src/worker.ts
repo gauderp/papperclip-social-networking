@@ -7,6 +7,8 @@ import type {
 } from "@paperclipai/plugin-sdk";
 import {
   MANAGED_SKILL_KEY,
+  META_MANAGED_SKILL_KEY,
+  META_TOOL_NAMES,
   TOOL_NAMES,
   X_MANAGED_SKILL_KEY,
   X_TOOL_NAMES,
@@ -53,6 +55,20 @@ import {
 } from "./x/accounts.js";
 import { getXCredentials } from "./x/config.js";
 import {
+  disconnectAccount as disconnectMetaAccount,
+  getNetworkStatus as getMetaNetworkStatus,
+  markAccountError as markMetaAccountError,
+  saveConnectedAccount as saveMetaConnectedAccount,
+} from "./meta/accounts.js";
+import { getMetaCredentials } from "./meta/config.js";
+import {
+  buildAuthorizeUrl as buildMetaAuthorizeUrl,
+  buildRedirectUri as buildMetaRedirectUri,
+  completeMetaOAuth,
+  createOAuthState as createMetaOAuthState,
+  verifyOAuthState as verifyMetaOAuthState,
+} from "./meta/oauth.js";
+import {
   buildAuthorizeUrl as buildXAuthorizeUrl,
   buildRedirectUri as buildXRedirectUri,
   codeChallengeFromVerifier,
@@ -75,6 +91,7 @@ async function reconcileManagedAgentSkills(ctx: PluginContext): Promise<void> {
     for (const company of companies) {
       await ctx.skills.managed.reconcile(MANAGED_SKILL_KEY, company.id);
       await ctx.skills.managed.reconcile(X_MANAGED_SKILL_KEY, company.id);
+      await ctx.skills.managed.reconcile(META_MANAGED_SKILL_KEY, company.id);
     }
     ctx.logger.info("managed agent skills reconciled", { companies: companies.length });
   } catch (err) {
@@ -353,6 +370,168 @@ function registerXAgentTools(ctx: PluginContext) {
   );
 }
 
+function registerMetaAgentTools(ctx: PluginContext) {
+  ctx.tools.register(
+    META_TOOL_NAMES.networkStatus,
+    {
+      displayName: "Meta network status",
+      description: "Meta (Facebook Page + IG Business) connection status for the run company.",
+      parametersSchema: { type: "object", properties: {} },
+    },
+    async (_params, runCtx): Promise<ToolResult> => {
+      const status = await getMetaNetworkStatus(ctx, runCtx.companyId, "meta");
+      return {
+        content: `Meta status: ${status.status}`,
+        data: status,
+      };
+    },
+  );
+
+  ctx.tools.register(
+    META_TOOL_NAMES.schedulePost,
+    {
+      displayName: "Schedule Meta post",
+      description: "Schedule a Facebook Page feed post for a future time.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          body: { type: "string" },
+          scheduledAt: { type: "string" },
+        },
+        required: ["body", "scheduledAt"],
+      },
+    },
+    async (params, runCtx): Promise<ToolResult> => {
+      const payload = params as { body?: string; scheduledAt?: string };
+      const validated = validateSchedulePostInput({
+        body: payload.body ?? "",
+        scheduledAt: payload.scheduledAt ?? "",
+      });
+      if (!validated.ok) {
+        return { error: validated.error };
+      }
+
+      const status = await getMetaNetworkStatus(ctx, runCtx.companyId, "meta");
+      if (status.status !== "connected") {
+        return {
+          error: "meta_not_connected",
+          content: "Conecte a conta Meta antes de agendar.",
+          data: status,
+        };
+      }
+
+      const post = await createScheduledPost(ctx.db, {
+        companyId: runCtx.companyId,
+        networkKey: "meta",
+        body: validated.body,
+        scheduledAt: validated.scheduledAt,
+      });
+      return {
+        content: `Agendado post ${post.id} para ${post.scheduledAt}`,
+        data: { post },
+      };
+    },
+  );
+
+  ctx.tools.register(
+    META_TOOL_NAMES.listScheduled,
+    {
+      displayName: "List Meta scheduled posts",
+      description: "List scheduled Meta posts for the company.",
+      parametersSchema: { type: "object", properties: {} },
+    },
+    async (_params, runCtx): Promise<ToolResult> => {
+      const posts = await listScheduledPosts(ctx.db, runCtx.companyId, "meta", { limit: 50 });
+      return {
+        content: `${posts.length} post(s) na fila`,
+        data: { posts },
+      };
+    },
+  );
+
+  ctx.tools.register(
+    META_TOOL_NAMES.cancelScheduled,
+    {
+      displayName: "Cancel Meta scheduled post",
+      description: "Cancel a pending scheduled Meta post.",
+      parametersSchema: {
+        type: "object",
+        properties: { postId: { type: "string" } },
+        required: ["postId"],
+      },
+    },
+    async (params, runCtx): Promise<ToolResult> => {
+      const postId = typeof (params as { postId?: string }).postId === "string"
+        ? (params as { postId: string }).postId.trim()
+        : "";
+      if (!postId) {
+        return { error: "postId_required" };
+      }
+
+      const deleted = await deletePendingScheduledPost(ctx.db, runCtx.companyId, postId);
+      if (!deleted) {
+        return { error: "not_found_or_not_pending" };
+      }
+      return { content: `Post ${postId} cancelado`, data: { ok: true, postId } };
+    },
+  );
+}
+
+function registerMetaActions(ctx: PluginContext) {
+  ctx.actions.register("meta-start-oauth", async (input) => {
+    const companyId = requireString(input.companyId, "companyId");
+    const publicOrigin = requireString(input.publicOrigin, "publicOrigin");
+    const companyPrefix = requireString(input.companyPrefix ?? "CUS", "companyPrefix");
+
+    const credentials = await getMetaCredentials(ctx);
+    const redirectUri = buildMetaRedirectUri(publicOrigin, companyPrefix);
+    const state = createMetaOAuthState(companyId, credentials.appSecret);
+    const authorizeUrl = buildMetaAuthorizeUrl({ credentials, redirectUri, state });
+
+    return { authorizeUrl, state, redirectUri };
+  });
+
+  ctx.actions.register("meta-complete-oauth", async (input) => {
+    const companyId = requireString(input.companyId, "companyId");
+    const code = requireString(input.code, "code");
+    const state = requireString(input.state, "state");
+    const publicOrigin = requireString(input.publicOrigin, "publicOrigin");
+    const companyPrefix = requireString(input.companyPrefix ?? "CUS", "companyPrefix");
+
+    try {
+      const credentials = await getMetaCredentials(ctx);
+      const statePayload = verifyMetaOAuthState(state, credentials.appSecret);
+      if (statePayload.companyId !== companyId) {
+        throw new Error("State OAuth nao corresponde a empresa atual.");
+      }
+
+      const redirectUri = buildMetaRedirectUri(publicOrigin, companyPrefix);
+      const tokens = await completeMetaOAuth(ctx.http, {
+        credentials,
+        code,
+        redirectUri,
+      });
+
+      const status = await saveMetaConnectedAccount(ctx, {
+        companyId,
+        tokens,
+      });
+
+      return { ok: true as const, status };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = await markMetaAccountError(ctx, companyId, message);
+      return { ok: false as const, error: message, status };
+    }
+  });
+
+  ctx.actions.register("meta-disconnect", async (input) => {
+    const companyId = requireString(input.companyId, "companyId");
+    const status = await disconnectMetaAccount(ctx, companyId);
+    return { status };
+  });
+}
+
 function registerXActions(ctx: PluginContext) {
   ctx.actions.register("x-start-oauth", async (input) => {
     const companyId = requireString(input.companyId, "companyId");
@@ -539,8 +718,10 @@ const plugin = definePlugin({
 
     registerLinkedInActions(ctx);
     registerXActions(ctx);
+    registerMetaActions(ctx);
     registerAgentTools(ctx);
     registerXAgentTools(ctx);
+    registerMetaAgentTools(ctx);
     await reconcileManagedAgentSkills(ctx);
 
     ctx.actions.register("setup-company-capabilities", async (input) => {
@@ -628,6 +809,14 @@ const plugin = definePlugin({
       return { posts };
     });
 
+    ctx.data.register("meta-scheduled-posts", async ({ companyId }) => {
+      if (typeof companyId !== "string" || !companyId) {
+        return { posts: [] };
+      }
+      const posts = await listScheduledPosts(ctx.db, companyId, "meta", { limit: 50 });
+      return { posts };
+    });
+
     ctx.data.register("linkedin-history", async ({ companyId }) => {
       if (typeof companyId !== "string" || !companyId) {
         return { posts: [], lastSync: null };
@@ -642,6 +831,29 @@ const plugin = definePlugin({
         posts,
         lastSync: typeof state === "string" ? state : null,
       };
+    });
+
+    ctx.actions.register("schedule-meta-post", async (params) => {
+      const companyId = typeof params?.companyId === "string" ? params.companyId : null;
+      if (!companyId) {
+        throw new Error("companyId_required");
+      }
+
+      const validated = validateSchedulePostInput({
+        body: typeof params?.body === "string" ? params.body : "",
+        scheduledAt: typeof params?.scheduledAt === "string" ? params.scheduledAt : "",
+      });
+      if (!validated.ok) {
+        throw new Error(validated.error);
+      }
+
+      const post = await createScheduledPost(ctx.db, {
+        companyId,
+        networkKey: "meta",
+        body: validated.body,
+        scheduledAt: validated.scheduledAt,
+      });
+      return { post };
     });
 
     ctx.actions.register("schedule-x-post", async (params) => {
