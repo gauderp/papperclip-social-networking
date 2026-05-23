@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { PluginContext } from "@paperclipai/plugin-sdk";
+import { pluginTable } from "../constants.js";
 import { rowToScheduledPost, type ScheduledPost, type ScheduledPostRow, type ScheduledPostStatus } from "./types.js";
 
 export type PluginDb = PluginContext["db"];
+
+const scheduledPosts = pluginTable("scheduled_posts");
 
 export async function createScheduledPost(
   db: PluginDb,
@@ -18,16 +21,16 @@ export async function createScheduledPost(
   const mediaJson = input.mediaJson != null ? JSON.stringify(input.mediaJson) : null;
 
   await db.execute(
-    `INSERT INTO scheduled_posts (
+    `INSERT INTO ${scheduledPosts} (
       id, company_id, network_key, body, media_json, scheduled_at, status
-    ) VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
+    ) VALUES ($1, $2, $3, $4, $5, $6, 'pending')`,
     [id, input.companyId, input.networkKey, input.body, mediaJson, input.scheduledAt],
   );
 
   const rows = await db.query<ScheduledPostRow>(
     `SELECT id, company_id, network_key, body, media_json, scheduled_at, status,
             published_at, external_post_id, error_message, created_at, updated_at
-     FROM scheduled_posts WHERE id = ? AND company_id = ?`,
+     FROM ${scheduledPosts} WHERE id = $1 AND company_id = $2`,
     [id, input.companyId],
   );
 
@@ -36,6 +39,45 @@ export async function createScheduledPost(
     throw new Error("scheduled_post_insert_failed");
   }
   return rowToScheduledPost(row);
+}
+
+export async function listPendingScheduledPostsForCompany(
+  db: PluginDb,
+  companyId: string,
+  networkKeys: readonly string[],
+  options?: { limit?: number },
+): Promise<ScheduledPost[]> {
+  if (networkKeys.length === 0) {
+    return [];
+  }
+
+  const limit = Math.min(options?.limit ?? 100, 200);
+  const rows = await db.query<ScheduledPostRow>(
+    `SELECT id, company_id, network_key, body, media_json, scheduled_at, status,
+            published_at, external_post_id, error_message, created_at, updated_at
+     FROM ${scheduledPosts}
+     WHERE company_id = $1
+       AND network_key = ANY($2::text[])
+       AND status = 'pending'
+     ORDER BY scheduled_at ASC
+     LIMIT $3`,
+    [companyId, networkKeys, limit],
+  );
+  return rows.map(rowToScheduledPost);
+}
+
+export async function countPendingScheduledPosts(
+  db: PluginDb,
+  companyId: string,
+  networkKey: string,
+): Promise<number> {
+  const rows = await db.query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count
+     FROM ${scheduledPosts}
+     WHERE company_id = $1 AND network_key = $2 AND status = 'pending'`,
+    [companyId, networkKey],
+  );
+  return Number(rows[0]?.count ?? 0);
 }
 
 export async function listScheduledPosts(
@@ -49,15 +91,16 @@ export async function listScheduledPosts(
 
   let sql = `SELECT id, company_id, network_key, body, media_json, scheduled_at, status,
                     published_at, external_post_id, error_message, created_at, updated_at
-             FROM scheduled_posts
-             WHERE company_id = ? AND network_key = ?`;
+             FROM ${scheduledPosts}
+             WHERE company_id = $1 AND network_key = $2`;
 
   if (options?.status) {
-    sql += ` AND status = ?`;
+    sql += ` AND status = $3`;
     params.push(options.status);
   }
 
-  sql += ` ORDER BY scheduled_at ASC LIMIT ?`;
+  const limitParam = params.length + 1;
+  sql += ` ORDER BY scheduled_at ASC LIMIT $${limitParam}`;
   params.push(limit);
 
   const rows = await db.query<ScheduledPostRow>(sql, params);
@@ -72,7 +115,7 @@ export async function getScheduledPost(
   const rows = await db.query<ScheduledPostRow>(
     `SELECT id, company_id, network_key, body, media_json, scheduled_at, status,
             published_at, external_post_id, error_message, created_at, updated_at
-     FROM scheduled_posts WHERE id = ? AND company_id = ?`,
+     FROM ${scheduledPosts} WHERE id = $1 AND company_id = $2`,
     [postId, companyId],
   );
   const row = rows[0];
@@ -85,8 +128,8 @@ export async function deletePendingScheduledPost(
   postId: string,
 ): Promise<boolean> {
   const result = await db.execute(
-    `DELETE FROM scheduled_posts
-     WHERE id = ? AND company_id = ? AND status = 'pending'`,
+    `DELETE FROM ${scheduledPosts}
+     WHERE id = $1 AND company_id = $2 AND status = 'pending'`,
     [postId, companyId],
   );
   return result.rowCount > 0;
@@ -99,8 +142,8 @@ export async function listDuePendingPosts(
   const rows = await db.query<ScheduledPostRow>(
     `SELECT id, company_id, network_key, body, media_json, scheduled_at, status,
             published_at, external_post_id, error_message, created_at, updated_at
-     FROM scheduled_posts
-     WHERE status = 'pending' AND scheduled_at <= ?
+     FROM ${scheduledPosts}
+     WHERE status = 'pending' AND scheduled_at <= $1
      ORDER BY scheduled_at ASC
      LIMIT 25`,
     [nowIso],
@@ -115,13 +158,13 @@ export async function markScheduledPostPublished(
   publishedAt: string,
 ): Promise<void> {
   await db.execute(
-    `UPDATE scheduled_posts
+    `UPDATE ${scheduledPosts}
      SET status = 'published',
-         published_at = ?,
-         external_post_id = ?,
+         published_at = $1,
+         external_post_id = $2,
          error_message = NULL,
-         updated_at = datetime('now')
-     WHERE id = ?`,
+         updated_at = now()
+     WHERE id = $3`,
     [publishedAt, externalPostId, postId],
   );
 }
@@ -132,11 +175,11 @@ export async function markScheduledPostFailed(
   errorMessage: string,
 ): Promise<void> {
   await db.execute(
-    `UPDATE scheduled_posts
+    `UPDATE ${scheduledPosts}
      SET status = 'failed',
-         error_message = ?,
-         updated_at = datetime('now')
-     WHERE id = ?`,
+         error_message = $1,
+         updated_at = now()
+     WHERE id = $2`,
     [errorMessage.slice(0, 2000), postId],
   );
 }

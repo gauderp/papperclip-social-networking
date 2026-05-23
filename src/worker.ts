@@ -1,5 +1,17 @@
 import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
-import type { PluginApiRequestInput, PluginApiResponse, PluginContext } from "@paperclipai/plugin-sdk";
+import type {
+  PluginApiRequestInput,
+  PluginApiResponse,
+  PluginContext,
+  ToolResult,
+} from "@paperclipai/plugin-sdk";
+import {
+  MANAGED_SKILL_KEY,
+  TOOL_NAMES,
+  X_MANAGED_SKILL_KEY,
+  X_TOOL_NAMES,
+} from "./agent-capabilities.js";
+import { NETWORKS } from "./constants.js";
 import { listLinkedInPostHistory } from "./db/post-history.js";
 import { runPublishScheduledJob } from "./jobs/publish-scheduled.js";
 import {
@@ -9,6 +21,7 @@ import {
   saveConnectedAccount,
 } from "./linkedin/accounts.js";
 import { getLinkedInCredentials } from "./linkedin/config.js";
+import { publishLinkedInPostNow } from "./linkedin/publish-now.js";
 import {
   buildAuthorizeUrl,
   buildRedirectUri,
@@ -23,19 +36,387 @@ import {
 } from "./linkedin/sync.js";
 import type { NetworkStatus } from "./linkedin/types.js";
 import {
+  countPendingScheduledPosts,
   createScheduledPost,
   deletePendingScheduledPost,
   getScheduledPost,
+  listPendingScheduledPostsForCompany,
   listScheduledPosts,
   type PluginDb,
 } from "./scheduled-posts/store.js";
-import { validateSchedulePostInput } from "./scheduled-posts/validation.js";
+import { validatePublishNowInput, validateSchedulePostInput } from "./scheduled-posts/validation.js";
+import {
+  disconnectAccount as disconnectXAccount,
+  getNetworkStatus as getXNetworkStatus,
+  markAccountError as markXAccountError,
+  saveConnectedAccount as saveXConnectedAccount,
+} from "./x/accounts.js";
+import { getXCredentials } from "./x/config.js";
+import {
+  buildAuthorizeUrl as buildXAuthorizeUrl,
+  buildRedirectUri as buildXRedirectUri,
+  codeChallengeFromVerifier,
+  createOAuthState as createXOAuthState,
+  exchangeCodeForTokens as exchangeXCodeForTokens,
+  fetchXProfile,
+  verifyOAuthState as verifyXOAuthState,
+} from "./x/oauth.js";
 
 function requireString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error(`${field} e obrigatorio.`);
   }
   return value.trim();
+}
+
+async function reconcileManagedAgentSkills(ctx: PluginContext): Promise<void> {
+  try {
+    const companies = await ctx.companies.list({ limit: 200, offset: 0 });
+    for (const company of companies) {
+      await ctx.skills.managed.reconcile(MANAGED_SKILL_KEY, company.id);
+      await ctx.skills.managed.reconcile(X_MANAGED_SKILL_KEY, company.id);
+    }
+    ctx.logger.info("managed agent skills reconciled", { companies: companies.length });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    ctx.logger.warn("managed agent skill reconcile skipped", { error: message });
+  }
+}
+
+function registerAgentTools(ctx: PluginContext) {
+  ctx.tools.register(
+    TOOL_NAMES.networkStatus,
+    {
+      displayName: "LinkedIn network status",
+      description: "LinkedIn connection status for the run company.",
+      parametersSchema: { type: "object", properties: {} },
+    },
+    async (_params, runCtx): Promise<ToolResult> => {
+      const status = await getNetworkStatus(ctx, runCtx.companyId, "linkedin");
+      return {
+        content: `LinkedIn status: ${status.status}`,
+        data: status,
+      };
+    },
+  );
+
+  ctx.tools.register(
+    TOOL_NAMES.schedulePost,
+    {
+      displayName: "Schedule LinkedIn post",
+      description: "Schedule a LinkedIn post for a future time.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          body: { type: "string" },
+          scheduledAt: { type: "string" },
+        },
+        required: ["body", "scheduledAt"],
+      },
+    },
+    async (params, runCtx): Promise<ToolResult> => {
+      const payload = params as { body?: string; scheduledAt?: string };
+      const validated = validateSchedulePostInput({
+        body: payload.body ?? "",
+        scheduledAt: payload.scheduledAt ?? "",
+      });
+      if (!validated.ok) {
+        return { error: validated.error };
+      }
+
+      const status = await getNetworkStatus(ctx, runCtx.companyId, "linkedin");
+      if (status.status !== "connected") {
+        return {
+          error: "linkedin_not_connected",
+          content: "Conecte a conta LinkedIn antes de agendar.",
+          data: status,
+        };
+      }
+
+      const post = await createScheduledPost(ctx.db, {
+        companyId: runCtx.companyId,
+        networkKey: "linkedin",
+        body: validated.body,
+        scheduledAt: validated.scheduledAt,
+      });
+      return {
+        content: `Agendado post ${post.id} para ${post.scheduledAt}`,
+        data: { post },
+      };
+    },
+  );
+
+  ctx.tools.register(
+    TOOL_NAMES.publishNow,
+    {
+      displayName: "Publish LinkedIn post now",
+      description: "Publish a LinkedIn post immediately (no scheduling).",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          body: { type: "string" },
+        },
+        required: ["body"],
+      },
+    },
+    async (params, runCtx): Promise<ToolResult> => {
+      const payload = params as { body?: string };
+      const validated = validatePublishNowInput({ body: payload.body ?? "" });
+      if (!validated.ok) {
+        return { error: validated.error };
+      }
+
+      const status = await getNetworkStatus(ctx, runCtx.companyId, "linkedin");
+      if (status.status !== "connected") {
+        return {
+          error: "linkedin_not_connected",
+          content: "Conecte a conta LinkedIn antes de publicar.",
+          data: status,
+        };
+      }
+
+      const result = await publishLinkedInPostNow({
+        db: ctx.db,
+        httpFetch: (url, init) => ctx.http.fetch(url, init),
+        companyId: runCtx.companyId,
+        body: validated.body,
+      });
+
+      if (!result.ok) {
+        return {
+          error: result.error,
+          content: `Falha ao publicar: ${result.error}`,
+        };
+      }
+
+      return {
+        content: `Publicado no LinkedIn (post ${result.postId}, id externo ${result.externalPostId})`,
+        data: {
+          postId: result.postId,
+          externalPostId: result.externalPostId,
+          publishedAt: result.publishedAt,
+        },
+      };
+    },
+  );
+
+  ctx.tools.register(
+    TOOL_NAMES.listScheduled,
+    {
+      displayName: "List LinkedIn scheduled posts",
+      description: "List scheduled LinkedIn posts for the company.",
+      parametersSchema: { type: "object", properties: {} },
+    },
+    async (_params, runCtx): Promise<ToolResult> => {
+      const posts = await listScheduledPosts(ctx.db, runCtx.companyId, "linkedin", {
+        limit: 50,
+      });
+      return {
+        content: `${posts.length} post(s) na fila`,
+        data: { posts },
+      };
+    },
+  );
+
+  ctx.tools.register(
+    TOOL_NAMES.cancelScheduled,
+    {
+      displayName: "Cancel LinkedIn scheduled post",
+      description: "Cancel a pending scheduled LinkedIn post.",
+      parametersSchema: {
+        type: "object",
+        properties: { postId: { type: "string" } },
+        required: ["postId"],
+      },
+    },
+    async (params, runCtx): Promise<ToolResult> => {
+      const postId = typeof (params as { postId?: string }).postId === "string"
+        ? (params as { postId: string }).postId.trim()
+        : "";
+      if (!postId) {
+        return { error: "postId_required" };
+      }
+
+      const deleted = await deletePendingScheduledPost(ctx.db, runCtx.companyId, postId);
+      if (!deleted) {
+        return { error: "not_found_or_not_pending" };
+      }
+      return { content: `Post ${postId} cancelado`, data: { ok: true, postId } };
+    },
+  );
+}
+
+function registerXAgentTools(ctx: PluginContext) {
+  ctx.tools.register(
+    X_TOOL_NAMES.networkStatus,
+    {
+      displayName: "X network status",
+      description: "X (Twitter) connection status for the run company.",
+      parametersSchema: { type: "object", properties: {} },
+    },
+    async (_params, runCtx): Promise<ToolResult> => {
+      const status = await getXNetworkStatus(ctx, runCtx.companyId, "x");
+      return {
+        content: `X status: ${status.status}`,
+        data: status,
+      };
+    },
+  );
+
+  ctx.tools.register(
+    X_TOOL_NAMES.schedulePost,
+    {
+      displayName: "Schedule X post",
+      description: "Schedule an X post for a future time.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          body: { type: "string" },
+          scheduledAt: { type: "string" },
+        },
+        required: ["body", "scheduledAt"],
+      },
+    },
+    async (params, runCtx): Promise<ToolResult> => {
+      const payload = params as { body?: string; scheduledAt?: string };
+      const validated = validateSchedulePostInput({
+        body: payload.body ?? "",
+        scheduledAt: payload.scheduledAt ?? "",
+      });
+      if (!validated.ok) {
+        return { error: validated.error };
+      }
+
+      const status = await getXNetworkStatus(ctx, runCtx.companyId, "x");
+      if (status.status !== "connected") {
+        return {
+          error: "x_not_connected",
+          content: "Conecte a conta X antes de agendar.",
+          data: status,
+        };
+      }
+
+      const post = await createScheduledPost(ctx.db, {
+        companyId: runCtx.companyId,
+        networkKey: "x",
+        body: validated.body,
+        scheduledAt: validated.scheduledAt,
+      });
+      return {
+        content: `Agendado post ${post.id} para ${post.scheduledAt}`,
+        data: { post },
+      };
+    },
+  );
+
+  ctx.tools.register(
+    X_TOOL_NAMES.listScheduled,
+    {
+      displayName: "List X scheduled posts",
+      description: "List scheduled X posts for the company.",
+      parametersSchema: { type: "object", properties: {} },
+    },
+    async (_params, runCtx): Promise<ToolResult> => {
+      const posts = await listScheduledPosts(ctx.db, runCtx.companyId, "x", { limit: 50 });
+      return {
+        content: `${posts.length} post(s) na fila`,
+        data: { posts },
+      };
+    },
+  );
+
+  ctx.tools.register(
+    X_TOOL_NAMES.cancelScheduled,
+    {
+      displayName: "Cancel X scheduled post",
+      description: "Cancel a pending scheduled X post.",
+      parametersSchema: {
+        type: "object",
+        properties: { postId: { type: "string" } },
+        required: ["postId"],
+      },
+    },
+    async (params, runCtx): Promise<ToolResult> => {
+      const postId = typeof (params as { postId?: string }).postId === "string"
+        ? (params as { postId: string }).postId.trim()
+        : "";
+      if (!postId) {
+        return { error: "postId_required" };
+      }
+
+      const deleted = await deletePendingScheduledPost(ctx.db, runCtx.companyId, postId);
+      if (!deleted) {
+        return { error: "not_found_or_not_pending" };
+      }
+      return { content: `Post ${postId} cancelado`, data: { ok: true, postId } };
+    },
+  );
+}
+
+function registerXActions(ctx: PluginContext) {
+  ctx.actions.register("x-start-oauth", async (input) => {
+    const companyId = requireString(input.companyId, "companyId");
+    const publicOrigin = requireString(input.publicOrigin, "publicOrigin");
+    const companyPrefix = requireString(input.companyPrefix ?? "CUS", "companyPrefix");
+
+    const credentials = await getXCredentials(ctx);
+    const redirectUri = buildXRedirectUri(publicOrigin, companyPrefix);
+    const { state, codeVerifier } = createXOAuthState(companyId, credentials.clientSecret);
+    const codeChallenge = codeChallengeFromVerifier(codeVerifier);
+    const authorizeUrl = buildXAuthorizeUrl({
+      credentials,
+      redirectUri,
+      state,
+      codeChallenge,
+    });
+
+    return { authorizeUrl, state, redirectUri };
+  });
+
+  ctx.actions.register("x-complete-oauth", async (input) => {
+    const companyId = requireString(input.companyId, "companyId");
+    const code = requireString(input.code, "code");
+    const state = requireString(input.state, "state");
+    const publicOrigin = requireString(input.publicOrigin, "publicOrigin");
+    const companyPrefix = requireString(input.companyPrefix ?? "CUS", "companyPrefix");
+
+    try {
+      const credentials = await getXCredentials(ctx);
+      const statePayload = verifyXOAuthState(state, credentials.clientSecret);
+      if (statePayload.companyId !== companyId) {
+        throw new Error("State OAuth nao corresponde a empresa atual.");
+      }
+
+      const redirectUri = buildXRedirectUri(publicOrigin, companyPrefix);
+      const tokens = await exchangeXCodeForTokens(ctx.http, {
+        credentials,
+        code,
+        redirectUri,
+        codeVerifier: statePayload.codeVerifier,
+      });
+
+      const profile = await fetchXProfile(ctx.http, tokens.accessToken);
+      tokens.userId = profile.userId;
+
+      const status = await saveXConnectedAccount(ctx, {
+        companyId,
+        displayName: profile.displayName,
+        tokens,
+      });
+
+      return { ok: true as const, status };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = await markXAccountError(ctx, companyId, message);
+      return { ok: false as const, error: message, status };
+    }
+  });
+
+  ctx.actions.register("x-disconnect", async (input) => {
+    const companyId = requireString(input.companyId, "companyId");
+    const status = await disconnectXAccount(ctx, companyId);
+    return { status };
+  });
 }
 
 function registerLinkedInActions(ctx: PluginContext) {
@@ -157,15 +538,77 @@ const plugin = definePlugin({
     runtimeCtx = ctx;
 
     registerLinkedInActions(ctx);
+    registerXActions(ctx);
+    registerAgentTools(ctx);
+    registerXAgentTools(ctx);
+    await reconcileManagedAgentSkills(ctx);
+
+    ctx.actions.register("setup-company-capabilities", async (input) => {
+      const companyId = requireString(input.companyId, "companyId");
+      const skill = await ctx.skills.managed.reconcile(MANAGED_SKILL_KEY, companyId);
+      return {
+        skillKey: skill.resourceKey,
+        skillId: skill.skillId,
+        status: skill.status,
+        canonicalKey: `plugin/gauderp-social-networking/linkedin-agent`,
+      };
+    });
+
+    const enabledNetworkKeys = () =>
+      NETWORKS.filter((network) => network.enabled).map((network) => network.key);
+
+    const metricsSyncStateKey = (networkKey: string) =>
+      networkKey === "linkedin" ? "linkedin-metrics-last-sync" : `${networkKey}-metrics-last-sync`;
 
     ctx.data.register("overview", async ({ companyId }) => {
       if (typeof companyId !== "string" || !companyId) {
-        return { networks: [] };
+        return { networks: [], totalPending: 0 };
       }
 
-      const status = await getNetworkStatus(ctx, companyId, "linkedin");
+      const networks = await Promise.all(
+        NETWORKS.filter((network) => network.enabled).map(async (network) => {
+          const status = await getNetworkStatus(ctx, companyId, network.key);
+          const syncState = await ctx.state.get({
+            scopeKind: "company",
+            scopeId: companyId,
+            stateKey: metricsSyncStateKey(network.key),
+          });
+          const pendingCount = await countPendingScheduledPosts(ctx.db, companyId, network.key);
+          return {
+            networkKey: status.networkKey,
+            status: status.status,
+            displayName: status.displayName,
+            lastMetricsSync: typeof syncState === "string" ? syncState : null,
+            pendingCount,
+          };
+        }),
+      );
+
       return {
-        networks: [{ networkKey: status.networkKey, status: status.status }],
+        networks,
+        totalPending: networks.reduce((sum, network) => sum + network.pendingCount, 0),
+      };
+    });
+
+    ctx.data.register("scheduled-posts", async ({ companyId }) => {
+      if (typeof companyId !== "string" || !companyId) {
+        return { posts: [] };
+      }
+
+      const posts = await listPendingScheduledPostsForCompany(
+        ctx.db,
+        companyId,
+        enabledNetworkKeys(),
+        { limit: 100 },
+      );
+      return {
+        posts: posts.map((post) => ({
+          id: post.id,
+          networkKey: post.networkKey,
+          body: post.body,
+          scheduledAt: post.scheduledAt,
+          status: post.status,
+        })),
       };
     });
 
@@ -174,6 +617,14 @@ const plugin = definePlugin({
         return { posts: [] };
       }
       const posts = await listScheduledPosts(ctx.db, companyId, "linkedin", { limit: 50 });
+      return { posts };
+    });
+
+    ctx.data.register("x-scheduled-posts", async ({ companyId }) => {
+      if (typeof companyId !== "string" || !companyId) {
+        return { posts: [] };
+      }
+      const posts = await listScheduledPosts(ctx.db, companyId, "x", { limit: 50 });
       return { posts };
     });
 
@@ -191,6 +642,29 @@ const plugin = definePlugin({
         posts,
         lastSync: typeof state === "string" ? state : null,
       };
+    });
+
+    ctx.actions.register("schedule-x-post", async (params) => {
+      const companyId = typeof params?.companyId === "string" ? params.companyId : null;
+      if (!companyId) {
+        throw new Error("companyId_required");
+      }
+
+      const validated = validateSchedulePostInput({
+        body: typeof params?.body === "string" ? params.body : "",
+        scheduledAt: typeof params?.scheduledAt === "string" ? params.scheduledAt : "",
+      });
+      if (!validated.ok) {
+        throw new Error(validated.error);
+      }
+
+      const post = await createScheduledPost(ctx.db, {
+        companyId,
+        networkKey: "x",
+        body: validated.body,
+        scheduledAt: validated.scheduledAt,
+      });
+      return { post };
     });
 
     ctx.actions.register("schedule-linkedin-post", async (params) => {
