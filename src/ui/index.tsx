@@ -10,6 +10,7 @@ import {
   type PluginSettingsPageProps,
 } from "@paperclipai/plugin-sdk/ui";
 import { NETWORKS, ROUTES } from "../constants.js";
+import { BOARD_AUDIT_AGENT_ID } from "../scheduled-posts/audit.js";
 
 type OverviewNetwork = {
   networkKey: string;
@@ -30,6 +31,8 @@ type HubScheduledPost = {
   body: string;
   scheduledAt: string;
   status: string;
+  createdByAgentId?: string | null;
+  createdByRunId?: string | null;
 };
 
 type ScheduledPostsData = {
@@ -50,6 +53,8 @@ type PostHistoryItem = {
   publishedAt: string | null;
   externalPostId: string | null;
   createdAt: string;
+  createdByAgentId?: string | null;
+  createdByRunId?: string | null;
   metrics: {
     likes: number;
     comments: number;
@@ -71,7 +76,32 @@ type ScheduledPostItem = {
   status: string;
   publishedAt: string | null;
   errorMessage: string | null;
+  createdByAgentId?: string | null;
+  createdByRunId?: string | null;
 };
+
+type PostAuditFields = {
+  createdByAgentId?: string | null;
+  createdByRunId?: string | null;
+};
+
+function formatPostOrigin(audit: PostAuditFields): string | null {
+  if (!audit.createdByAgentId && !audit.createdByRunId) return null;
+  if (audit.createdByAgentId === BOARD_AUDIT_AGENT_ID) return "Origem: painel (humano)";
+  const short = (id: string) => (id.length > 8 ? `${id.slice(0, 8)}…` : id);
+  const parts: string[] = ["Origem: agente"];
+  if (audit.createdByAgentId) parts.push(short(audit.createdByAgentId));
+  if (audit.createdByRunId) parts.push(`run ${short(audit.createdByRunId)}`);
+  return parts.join(" · ");
+}
+
+function PostOriginLabel({ audit }: { audit: PostAuditFields }) {
+  const label = formatPostOrigin(audit);
+  if (!label) return null;
+  return (
+    <div style={{ fontSize: "0.75rem", opacity: 0.65, fontFamily: "monospace" }}>{label}</div>
+  );
+}
 
 type LinkedInScheduledData = {
   posts: ScheduledPostItem[];
@@ -271,6 +301,7 @@ export function SocialHubPage({ context }: PluginPageProps) {
                   </span>
                 </div>
                 <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{post.body}</p>
+                <PostOriginLabel audit={post} />
               </li>
             ))}
           </ul>
@@ -573,6 +604,7 @@ export function LinkedInPage({ context }: PluginPageProps) {
                   {post.errorMessage ? ` — ${post.errorMessage}` : ""}
                 </div>
                 <p style={{ margin: "0.25rem 0 0", whiteSpace: "pre-wrap" }}>{post.body}</p>
+                <PostOriginLabel audit={post} />
                 {post.status === "pending" ? (
                   <button
                     type="button"
@@ -633,6 +665,7 @@ export function LinkedInPage({ context }: PluginPageProps) {
                   {formatWhen(post.publishedAt ?? post.createdAt)} · {post.status}
                 </div>
                 <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{post.body}</p>
+                <PostOriginLabel audit={post} />
                 {post.metrics ? (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", fontSize: "0.85rem" }}>
                     <span>Curtidas: <strong>{post.metrics.likes}</strong></span>
@@ -922,6 +955,7 @@ export function XPage({ context }: PluginPageProps) {
                   {post.errorMessage ? ` — ${post.errorMessage}` : ""}
                 </div>
                 <p style={{ margin: "0.25rem 0 0", whiteSpace: "pre-wrap" }}>{post.body}</p>
+                <PostOriginLabel audit={post} />
                 {post.status === "pending" ? (
                   <button
                     type="button"
@@ -1213,6 +1247,7 @@ export function MetaPage({ context }: PluginPageProps) {
                   {post.errorMessage ? ` — ${post.errorMessage}` : ""}
                 </div>
                 <p style={{ margin: "0.25rem 0 0", whiteSpace: "pre-wrap" }}>{post.body}</p>
+                <PostOriginLabel audit={post} />
                 {post.status === "pending" ? (
                   <button
                     type="button"

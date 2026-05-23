@@ -7,6 +7,11 @@ export type PluginDb = PluginContext["db"];
 
 const scheduledPosts = pluginTable("scheduled_posts");
 
+const SCHEDULED_POST_COLUMNS = `id, company_id, network_key, body, media_json, scheduled_at, status,
+            published_at, external_post_id, error_message,
+            created_by_agent_id, created_by_run_id,
+            created_at, updated_at`;
+
 export async function createScheduledPost(
   db: PluginDb,
   input: {
@@ -15,6 +20,8 @@ export async function createScheduledPost(
     body: string;
     scheduledAt: string;
     mediaJson?: unknown;
+    createdByAgentId?: string | null;
+    createdByRunId?: string | null;
   },
 ): Promise<ScheduledPost> {
   const id = randomUUID();
@@ -22,14 +29,23 @@ export async function createScheduledPost(
 
   await db.execute(
     `INSERT INTO ${scheduledPosts} (
-      id, company_id, network_key, body, media_json, scheduled_at, status
-    ) VALUES ($1, $2, $3, $4, $5, $6, 'pending')`,
-    [id, input.companyId, input.networkKey, input.body, mediaJson, input.scheduledAt],
+      id, company_id, network_key, body, media_json, scheduled_at, status,
+      created_by_agent_id, created_by_run_id
+    ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8)`,
+    [
+      id,
+      input.companyId,
+      input.networkKey,
+      input.body,
+      mediaJson,
+      input.scheduledAt,
+      input.createdByAgentId ?? null,
+      input.createdByRunId ?? null,
+    ],
   );
 
   const rows = await db.query<ScheduledPostRow>(
-    `SELECT id, company_id, network_key, body, media_json, scheduled_at, status,
-            published_at, external_post_id, error_message, created_at, updated_at
+    `SELECT ${SCHEDULED_POST_COLUMNS}
      FROM ${scheduledPosts} WHERE id = $1 AND company_id = $2`,
     [id, input.companyId],
   );
@@ -53,8 +69,7 @@ export async function listPendingScheduledPostsForCompany(
 
   const limit = Math.min(options?.limit ?? 100, 200);
   const rows = await db.query<ScheduledPostRow>(
-    `SELECT id, company_id, network_key, body, media_json, scheduled_at, status,
-            published_at, external_post_id, error_message, created_at, updated_at
+    `SELECT ${SCHEDULED_POST_COLUMNS}
      FROM ${scheduledPosts}
      WHERE company_id = $1
        AND network_key = ANY($2::text[])
@@ -89,8 +104,7 @@ export async function listScheduledPosts(
   const limit = Math.min(options?.limit ?? 50, 100);
   const params: unknown[] = [companyId, networkKey];
 
-  let sql = `SELECT id, company_id, network_key, body, media_json, scheduled_at, status,
-                    published_at, external_post_id, error_message, created_at, updated_at
+  let sql = `SELECT ${SCHEDULED_POST_COLUMNS}
              FROM ${scheduledPosts}
              WHERE company_id = $1 AND network_key = $2`;
 
@@ -113,8 +127,7 @@ export async function getScheduledPost(
   postId: string,
 ): Promise<ScheduledPost | null> {
   const rows = await db.query<ScheduledPostRow>(
-    `SELECT id, company_id, network_key, body, media_json, scheduled_at, status,
-            published_at, external_post_id, error_message, created_at, updated_at
+    `SELECT ${SCHEDULED_POST_COLUMNS}
      FROM ${scheduledPosts} WHERE id = $1 AND company_id = $2`,
     [postId, companyId],
   );
@@ -140,8 +153,7 @@ export async function listDuePendingPosts(
   nowIso: string,
 ): Promise<ScheduledPost[]> {
   const rows = await db.query<ScheduledPostRow>(
-    `SELECT id, company_id, network_key, body, media_json, scheduled_at, status,
-            published_at, external_post_id, error_message, created_at, updated_at
+    `SELECT ${SCHEDULED_POST_COLUMNS}
      FROM ${scheduledPosts}
      WHERE status = 'pending' AND scheduled_at <= $1
      ORDER BY scheduled_at ASC

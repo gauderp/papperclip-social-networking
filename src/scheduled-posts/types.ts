@@ -11,6 +11,8 @@ export type ScheduledPostRow = {
   published_at: string | null;
   external_post_id: string | null;
   error_message: string | null;
+  created_by_agent_id: string | null;
+  created_by_run_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -26,6 +28,8 @@ export type ScheduledPost = {
   publishedAt: string | null;
   externalPostId: string | null;
   errorMessage: string | null;
+  createdByAgentId: string | null;
+  createdByRunId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -50,6 +54,8 @@ export function rowToScheduledPost(row: ScheduledPostRow): ScheduledPost {
     publishedAt: row.published_at,
     externalPostId: row.external_post_id,
     errorMessage: row.error_message,
+    createdByAgentId: row.created_by_agent_id,
+    createdByRunId: row.created_by_run_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

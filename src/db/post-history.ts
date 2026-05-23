@@ -12,6 +12,8 @@ type HistoryRow = {
   published_at: string | null;
   external_post_id: string | null;
   created_at: string;
+  created_by_agent_id: string | null;
+  created_by_run_id: string | null;
   likes: number | null;
   comments: number | null;
   shares: number | null;
@@ -32,6 +34,8 @@ export async function listLinkedInPostHistory(
        sp.published_at,
        sp.external_post_id,
        sp.created_at,
+       sp.created_by_agent_id,
+       sp.created_by_run_id,
        pm.likes,
        pm.comments,
        pm.shares,
@@ -58,6 +62,8 @@ export async function listLinkedInPostHistory(
     publishedAt: row.published_at,
     externalPostId: row.external_post_id,
     createdAt: row.created_at,
+    createdByAgentId: row.created_by_agent_id,
+    createdByRunId: row.created_by_run_id,
     metrics:
       row.external_post_id && row.fetched_at
         ? {

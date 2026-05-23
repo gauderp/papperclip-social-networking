@@ -13,6 +13,8 @@ export type PublishLinkedInNowDeps = {
   httpFetch: HttpFetch;
   companyId: string;
   body: string;
+  createdByAgentId?: string | null;
+  createdByRunId?: string | null;
   now?: () => Date;
 };
 
@@ -50,6 +52,8 @@ export async function publishLinkedInPostNow(
     networkKey: "linkedin",
     body: validated.body,
     scheduledAt: nowIso,
+    createdByAgentId: deps.createdByAgentId ?? null,
+    createdByRunId: deps.createdByRunId ?? null,
   });
 
   const result = await publishLinkedInTextPost(deps.httpFetch, {

@@ -45,6 +45,8 @@ export type PostHistoryItem = {
   publishedAt: string | null;
   externalPostId: string | null;
   createdAt: string;
+  createdByAgentId: string | null;
+  createdByRunId: string | null;
   metrics: {
     likes: number;
     comments: number;

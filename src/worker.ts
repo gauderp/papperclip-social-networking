@@ -46,6 +46,7 @@ import {
   listScheduledPosts,
   type PluginDb,
 } from "./scheduled-posts/store.js";
+import { auditFromBoard, auditFromRunCtx } from "./scheduled-posts/audit.js";
 import { validatePublishNowInput, validateSchedulePostInput } from "./scheduled-posts/validation.js";
 import {
   disconnectAccount as disconnectXAccount,
@@ -155,6 +156,7 @@ function registerAgentTools(ctx: PluginContext) {
         networkKey: "linkedin",
         body: validated.body,
         scheduledAt: validated.scheduledAt,
+        ...auditFromRunCtx(runCtx),
       });
       return {
         content: `Agendado post ${post.id} para ${post.scheduledAt}`,
@@ -197,6 +199,7 @@ function registerAgentTools(ctx: PluginContext) {
         httpFetch: (url, init) => ctx.http.fetch(url, init),
         companyId: runCtx.companyId,
         body: validated.body,
+        ...auditFromRunCtx(runCtx),
       });
 
       if (!result.ok) {
@@ -318,6 +321,7 @@ function registerXAgentTools(ctx: PluginContext) {
         networkKey: "x",
         body: validated.body,
         scheduledAt: validated.scheduledAt,
+        ...auditFromRunCtx(runCtx),
       });
       return {
         content: `Agendado post ${post.id} para ${post.scheduledAt}`,
@@ -425,6 +429,7 @@ function registerMetaAgentTools(ctx: PluginContext) {
         networkKey: "meta",
         body: validated.body,
         scheduledAt: validated.scheduledAt,
+        ...auditFromRunCtx(runCtx),
       });
       return {
         content: `Agendado post ${post.id} para ${post.scheduledAt}`,
@@ -686,6 +691,7 @@ async function handleScheduledPostsCreate(
     networkKey,
     body: validated.body,
     scheduledAt: validated.scheduledAt,
+    ...auditFromBoard(),
   });
   return { status: 201, body: { post } };
 }
@@ -789,6 +795,8 @@ const plugin = definePlugin({
           body: post.body,
           scheduledAt: post.scheduledAt,
           status: post.status,
+          createdByAgentId: post.createdByAgentId,
+          createdByRunId: post.createdByRunId,
         })),
       };
     });
@@ -852,6 +860,7 @@ const plugin = definePlugin({
         networkKey: "meta",
         body: validated.body,
         scheduledAt: validated.scheduledAt,
+        ...auditFromBoard(),
       });
       return { post };
     });
@@ -875,6 +884,7 @@ const plugin = definePlugin({
         networkKey: "x",
         body: validated.body,
         scheduledAt: validated.scheduledAt,
+        ...auditFromBoard(),
       });
       return { post };
     });
@@ -898,6 +908,7 @@ const plugin = definePlugin({
         networkKey: "linkedin",
         body: validated.body,
         scheduledAt: validated.scheduledAt,
+        ...auditFromBoard(),
       });
       return { post };
     });

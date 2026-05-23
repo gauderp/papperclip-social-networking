@@ -21,6 +21,8 @@ type ScheduledPostRow = {
   published_at: string | null;
   external_post_id: string | null;
   error_message: string | null;
+  created_by_agent_id: string | null;
+  created_by_run_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -64,9 +66,17 @@ export type MemoryPluginDb = PluginDb & {
   };
 };
 
+function normalizeScheduledPostRow(row: ScheduledPostRow): ScheduledPostRow {
+  return {
+    created_by_agent_id: null,
+    created_by_run_id: null,
+    ...row,
+  };
+}
+
 export function createMemoryPluginDb(initial?: Partial<MemoryDbState>): MemoryPluginDb {
   const state: MemoryDbState = {
-    scheduled_posts: [...(initial?.scheduled_posts ?? [])],
+    scheduled_posts: (initial?.scheduled_posts ?? []).map(normalizeScheduledPostRow),
     network_accounts: [...(initial?.network_accounts ?? [])],
     post_metrics: [...(initial?.post_metrics ?? [])],
   };
@@ -74,7 +84,11 @@ export function createMemoryPluginDb(initial?: Partial<MemoryDbState>): MemoryPl
   const db: MemoryPluginDb = {
     seed: {
       addScheduledPost(row) {
-        state.scheduled_posts.push(row);
+        state.scheduled_posts.push({
+          created_by_agent_id: null,
+          created_by_run_id: null,
+          ...row,
+        });
       },
       addNetworkAccount(row) {
         const idx = state.network_accounts.findIndex(
@@ -130,6 +144,8 @@ export function createMemoryPluginDb(initial?: Partial<MemoryDbState>): MemoryPl
             published_at: sp.published_at,
             external_post_id: sp.external_post_id,
             created_at: sp.created_at,
+            created_by_agent_id: sp.created_by_agent_id,
+            created_by_run_id: sp.created_by_run_id,
             likes: pm?.likes ?? null,
             comments: pm?.comments ?? null,
             shares: pm?.shares ?? null,
@@ -241,8 +257,8 @@ export function createMemoryPluginDb(initial?: Partial<MemoryDbState>): MemoryPl
           body,
           mediaJson,
           scheduledAt,
-          status,
-          publishedAt,
+          statusOrAgentId,
+          publishedAtOrRunId,
           externalPostId,
         ] = params as [
           string,
@@ -252,9 +268,17 @@ export function createMemoryPluginDb(initial?: Partial<MemoryDbState>): MemoryPl
           string | null,
           string,
           string?,
-          string?,
+          string | null?,
           string?,
         ];
+
+        const hasAuditColumns =
+          normalized.includes("created_by_agent_id") && params.length >= 8;
+        const status = hasAuditColumns ? "pending" : (statusOrAgentId ?? "pending");
+        const createdByAgentId = hasAuditColumns ? (statusOrAgentId ?? null) : null;
+        const createdByRunId = hasAuditColumns ? (publishedAtOrRunId ?? null) : null;
+        const publishedAt = hasAuditColumns ? null : (publishedAtOrRunId ?? null);
+        const externalPostIdValue = hasAuditColumns ? null : (externalPostId ?? null);
 
         const now = new Date().toISOString();
         state.scheduled_posts.push({
@@ -264,10 +288,12 @@ export function createMemoryPluginDb(initial?: Partial<MemoryDbState>): MemoryPl
           body,
           media_json: mediaJson ?? null,
           scheduled_at: scheduledAt,
-          status: status ?? "pending",
-          published_at: publishedAt ?? null,
-          external_post_id: externalPostId ?? null,
+          status,
+          published_at: publishedAt,
+          external_post_id: externalPostIdValue,
           error_message: null,
+          created_by_agent_id: createdByAgentId,
+          created_by_run_id: createdByRunId,
           created_at: now,
           updated_at: now,
         });
